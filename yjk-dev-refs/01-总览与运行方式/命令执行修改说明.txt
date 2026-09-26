@@ -1,0 +1,3 @@
+一、删除命令pyyjks_init
+二、原pyyjks_load改为yjks_pyload。
+三、支持含中文路径的py文件。

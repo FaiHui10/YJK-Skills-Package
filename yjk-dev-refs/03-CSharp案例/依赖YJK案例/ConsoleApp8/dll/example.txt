@@ -1,0 +1,45 @@
+        [CommandMethod("Test_newdata")]
+        public void Func13()
+        {
+            ClrYJKSCommand yjkscmd = new ClrYJKSCommand();
+            yjkscmd.CsRunCommand("yjk_save");
+            Hi_AddProjectToYjk my = new Hi_AddProjectToYjk();
+            my.ReadOnlyGroup();
+            int maxID = my.GetMaxID();
+            var model= my.GetDbmodel();
+            DataFunc dataFunc = new DataFunc();
+            dataFunc.SetModel(model);
+            dataFunc.SetID(maxID);
+            //新增截面
+            Mdl_ColSect defcol = dataFunc.ColSect_Def(6, 1, "500,500");
+            Mdl_BeamSect defbeam = dataFunc.BeamSect_Def(6, 1, "250,1000");
+            Mdl_WallSect defwall = dataFunc.WallSect_Def(6, 1, 1000);
+            Mdl_BraceSect defbrace = dataFunc.BraceSect_Def(5, 3, "500");
+            Mdl_WallHoleDef defwallhole = dataFunc.WallHoleDef(300, 2500);
+            //修改YJK工程中group内构件的截面
+            var group = dataFunc.GetGroupObjList(model.m_Group[0]);
+            foreach(Mdl_ColSeg col in group.collist)
+            {
+                col.SectID = defcol.ID;
+            }
+            foreach (var beam in group.beamlist)
+            {
+                beam.SectID = defbeam.ID;
+            }
+            foreach (var wall in group.walllist)
+            {
+                wall.SectID = defwall.ID;
+            }
+            foreach (var brace in group.bracelist)
+            {
+                brace.SectID = defbrace.ID;
+            }
+            foreach (var wallhole in group.windowlist)
+            {
+                wallhole.SectID = defwallhole.ID;
+            }
+            dataFunc.DbModel_Assign();
+            my.SetDbmodel(dataFunc.GetDbModelData());
+            //增加到yjk
+            my.AddToYJK();
+        }

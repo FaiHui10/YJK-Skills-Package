@@ -1,0 +1,14 @@
+在CUI文件中一个按钮有两个地方需要加，视频中只加了一个地方，比如“加载.Net程序集”的按钮对应如下：
+1. 			<MenuMacro UID="ID_yjk_csload">
+				<Command>yjks_csload</Command>
+				<HelpString UID="XLS_Column">加载.Net程序集</HelpString>
+				<HelpRef>楼层组装\22加载.Net程序集</HelpRef>
+				<Description>C#二开</Description>
+				<RcImage Name="RCDATA_2526" />
+			</MenuMacro>
+2.
+						<SubPanel Title="C#二开">
+							<RibbonRow Title="">
+								<UIElement ElementType="CommandButton" Label="C#二开" Orientation="Vertical" Id="ID_yjk_csload" ShowLabel="True" ResizeStyle="Auto" Size="Large" MenuMacroId="ID_yjk_csload" />
+							</RibbonRow>
+						</SubPanel>

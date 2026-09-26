@@ -1,0 +1,6 @@
+一、打开YJK替换文件，选择对应版本（以4.2版本的YJK为例），复制替换到YJK安装目录下。
+
+二、打开ConsoleApp5项目，修改代码中CsQRunCommandEx指令的ydb路径，可用文件夹内myjk.ydb的路径。
+      修改完成后，将新生成的UserCode.dll复制替换到YJK安装目录。
+
+三、打开yjk，执行指令yjks_csload即可。

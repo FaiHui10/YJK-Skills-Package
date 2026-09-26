@@ -1,0 +1,5 @@
+一、打开YJK替换文件，选择对应版本（以5.1版本的YJK为例），复制替换到YJK安装目录下。
+
+二、打开ConsoleApp8项目，将新生成的UserCode.dll复制替换到YJK安装目录。
+
+三、打开yjk，执行指令yjks_csload，然后依次执行代码中注册的命令Test_Func1、Test_Func2、Test_Func3、Test_Func4即可实现相应功能。

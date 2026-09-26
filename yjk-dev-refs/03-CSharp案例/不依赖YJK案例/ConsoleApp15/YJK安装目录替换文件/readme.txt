@@ -1,0 +1,1 @@
+除了UserCode1.dll，还需要将../依赖YJK案例/YJK替换文件中的内容复制到YJK软件安装的目录下，此外，还需要在apiPlugList.txt中填写UserCode1.dll。

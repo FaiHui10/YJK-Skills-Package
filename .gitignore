@@ -1,0 +1,43 @@
+# 共享缓存与运行残留（不要提交）
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# 本地跑 YJK 时产生的工程目录与结果（体积大、含本机路径）
+[Yy][Jj][Kk]_run*/
+设计结果/
+中间数据/
+施工图/
+施工图设置/
+计算书/
+~temp/
+*.yjk
+*.ymd
+*.yg
+*.ygt
+*.yjb
+*.2ds
+*.pmd
+*.pre
+*.rel
+*.er2
+*.er21
+*.out
+probe.ydb
+*.ydb.tmp
+*.ydb.part
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini
+*_user_meta.json
+
+# 本地私有配置（可能含路径与授权信息）
+sscs_local.ydb
+sscs_default.ydb
+own.json

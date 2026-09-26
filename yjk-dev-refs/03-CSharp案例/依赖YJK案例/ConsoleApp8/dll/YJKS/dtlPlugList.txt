@@ -1,0 +1,53 @@
+::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+: dtlPlugList.txt 
+: 此文件中包含的dll将在插件管理器启动时加载
+::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+dtlLua.dll
+dtlstplan.dll 
+yjkspre.dll <IDModule_*> <IDSPRE_ROOT>
+yjkdisplay.dll <IDSPRE_ROOT> <IDDSN_*> <IDQT_MASONRY> <IDSOLIDFEA>
+yjkdesign.dll <IDSPRE_ROOT> <IDDSN_*> <IDQT_MASONRY> <IDSOLIDFEA>
+YJKToAuditPlatform.dll <IDDSN_*>
+YJKCompare.dll
+yjkBaseDraw.dll <JCCAD_BUILDING> <IDDTL_*> <JCCAD_RESULT> <ID_DZZL_MENU>
+yjkMasonry.dll <IDQT_MASONRY> <IDDSN_DSP_QT>
+yjkSModRel.dll <IDModule_*> <IDSPRE_ROOT>
+yjktransload.dll <IDModule_*> <IDSPRE_ROOT>
+YJKCBeamCal.dll <IDModule_Basic>
+YJKCheckLoad.dll <IDSPRE_ROOT>
+jcdzzl.dll <JCCAD_BUILDING> <JCCAD_RESULT> <ID_DZZL_MENU> <IDModule_DZZL_MENU>
+dtlSlab.dll <IDDTL_*> <IDAUDIT_*>
+dtlRC.dll <IDDTL_*> <IDAUDIT_*> <IDQUANTITYLIST_*>
+yjkAudit.dll <IDAUDIT_*>
+TimeHistory.dll <IDTIMHISTORY>
+yjkStair.dll
+YjkTruss.dll
+PrestressMod.dll
+Post-ElasticPlasticity.dll <IDABAQUSTIMHISTORY>
+Post-PushOver.dll <IDYJKPUSHOVER>
+: Post-YPacoNLTH.dll
+Post-YJKElasticPlasticity.dll <IDYJKEPTIMHISTORY>
+: SteelNodeDetail.dll
+YJKEP.dll  <IDYJKEPTIMHISTORY> <IDYJKPUSHOVER> <IDYJKPACOTIMHISTORY> <IDABAQUSTIMHISTORY>
+ YJKSAP.dll
+ MST2YJK.dll
+ YJK2MST.dll
+YJKSlabfit.dll
+YJKDesignExport.dll
+yjkCFTWSSWall.dll
+: YJKOffice.dll
+DsnTools.dll
+solidfea.dll
+VtkPlatform.dll
+YJK23D3S.dll
+3D3S2YJK.dll
+DynamicTimeHistory.dll <IDDynamicTimeHistory>
+dtlPcGraph.dll
+yjkRecastModel.dll
+yjkBasicProc.dll
+yjkFrameTool.dll
+YJKtoIFC.dll
+yjkJcToolApp.dll
+YJKtoSAF.dll
+: YJKMoJiaDsnTools.dll
+pyYJKSPlugin.dll

@@ -1,0 +1,89 @@
+========================================================================
+  YJK 自动化技能包 —— 先读我
+========================================================================
+
+这套东西干什么？
+  不用手点 YJK 界面，用命令行就能：
+    建工程 → 导入模型 → 计算 → 出施工图 → 算混凝土和钢筋量
+    → 比较不同柱截面/楼盖方案 → 出一份 Excel 报告
+
+  靠 YJK 官方的外部控制通道（YJKSControl）驱动，不模拟鼠标键盘，
+  所以锁屏也能跑；弹窗由看门狗处理（授权类弹窗不自动应答，见下）。
+
+
+包含五个技能：
+
+  yjk-auto-drive           底座。只管把 YJK 驱动起来、把模型算出来，
+                           不含任何业务逻辑。其它四个都依赖它。
+
+  column-section-opt       柱截面与混凝土等级怎么选最省。
+  floor-system-comparison  楼盖次梁怎么摆（不摆 / 单向1道 / 2道 / 十字 / 井字）最省。
+  column-scheme-comparison 柱子用钢筋混凝土还是钢管混凝土，哪个便宜。
+  yjk-draw-takeoff         算完之后：自动出施工图 DWG + 统计混凝土/钢筋工程量。
+
+
+怎么装（详细见 INSTALL.md）：
+
+  1) 把五个文件夹放到技能目录下，保持平级 —— 业务技能靠"旁边的兄弟目录"找底座。
+
+  2) 跑一次环境准备（只在装的时候跑）：
+       python yjk-auto-drive\scripts\setup_env.py
+       python yjk-auto-drive\scripts\yjk_probe.py --fix-config
+
+  3) 验收：
+       python yjk-auto-drive\scripts\yjk_probe.py            环境自检，看"[2] 结论"
+       python yjk-auto-drive\scripts\selfcheck.py            离线逻辑自检，秒级
+       python yjk-auto-drive\scripts\portability_check.py    换机器自检，退出码 0 = 通过
+       python yjk-auto-drive\scripts\encoding_check.py       编码约定自检，退出码 0 = 通过
+
+
+最常用的一条命令（算一个模型）：
+
+  python yjk-auto-drive\scripts\yjk_auto.py host ^
+      --dir "<工作目录>" --name Auto1 ^
+      --import "<模型.ydb>" --prep --calc
+
+  它一口气做完：清场 → 启动 YJK → 新建工程 → 导入模型 → 预处理 → 计算 → 列结果。
+  跑完看 "<工作目录>\设计结果\" 里有多少个文件。
+  （尖括号里换成你自己的路径；文档不写具体盘符，免得换机器照抄就错。）
+
+
+出图 + 出量（两行）：
+
+  python yjk-draw-takeoff\scripts\draw_quant.py --ydb 模型.ydb --proj P1
+  python yjk-draw-takeoff\scripts\summary_xlsx.py results\P1 --name P1
+
+  第一行出 DWG 施工图 + 混凝土/钢筋工程量；第二行汇总成 6 页 Excel。
+
+
+四个最容易踩的地方：
+
+  1. YJK 必须"无参数启动"。带 .yjk 路径启动能开工程，但通道是坏的 ——
+     所有命令秒回成功却什么都不做。要打开模型请用"新建工程 + 导入模型"。
+
+  2. 全机只能有一个 yjks.exe。多个实例会互相抢消息，
+     表现为"有成功应答但命令不执行"。每次开工前先清场。
+
+  3. 判断成功别看命令返回值，只看文件有没有真的变（mtime / 大小）。
+
+  4. 新建工程的"总信息"默认值不能用：
+     结构体系=框架结构、6 度(0.05g)、Ⅰ1 类场地、A 类粗糙度、基本风压 0.10 kN/m²。
+     拿它算百米级框架-核心筒，等于基本不算抗震不算风，而结果文件照样齐全。
+     建模后先跑一次：
+       python yjk-auto-drive\scripts\projpara.py set  --db 模型.ydb --set 结构体系=框筒结构 ...
+       python yjk-auto-drive\scripts\projpara.py check --db 模型.ydb --res 工程目录
+     check 会按 wmass.out 逐项回读，把"写了但没生效"的项列出来。
+     （参数 ID 与枚举码的权威表见 yjk-dev-refs\06-总信息参数ID表\）
+
+
+更细的东西：
+  换到别的 agent / IDE 上用，先看 AGENT-COMPAT.md（前置条件 / 环境变量 / 自检步骤 / 编码约定）；
+  每个技能目录下的 SKILL.md 是入口文档；
+  references\ 里是命令全表、协议说明、排查手册、规范原文核对；
+  scripts\README.md（有的技能有）是脚本的输入输出说明；
+  yjk-dev-refs\ 是 YJK 官方二次开发资料（接口说明 / 参数宏定义 / 官方案例），
+  由 gitee 的 yjk-opensource 组织仓库转换而来，离线可查。
+
+  想知道官方建模接口能不能写盘（历史上踩过会挂死的坑）：
+    python column-section-opt\scripts\driver.py createydb
+========================================================================
