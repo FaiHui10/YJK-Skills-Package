@@ -26,7 +26,6 @@ r"""把"未随仓库分发"的厂商资料补回本地：官方客户端 DLL + Y
 from __future__ import annotations
 
 import argparse
-import glob
 import os
 import shutil
 import subprocess
@@ -48,15 +47,38 @@ DLL_REL = os.path.join("不依赖YJK案例", "dll", "YJKAPI.dll")
 
 
 def find_yjk_dir():
+    """找 YJK 安装目录（版本子目录，如 <盘>:\\YJKS\\YJKS_7_1_0）。
+
+    先环境变量，再**枚举本机所有盘符**下的常见位置 —— 不写死盘符
+    （与包内 `yjk_api.py::_fallback_roots` 同一口径）。
+    """
     for k in ("YJK_DIR", "YJK_HOME"):
         v = os.environ.get(k)
         if v and os.path.isdir(v):
             return v
-    for pat in (r"C:\YJKS\YJKS_*", r"D:\YJKS\YJKS_*", r"C:\Program Files\YJKS\YJKS_*"):
-        hit = sorted(glob.glob(pat))
-        if hit:
-            return hit[-1]
-    return None
+    drives = []
+    sysd = os.environ.get("SystemDrive")
+    if sysd:
+        drives.append(sysd.rstrip("\\/") + os.sep)
+    for L in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+        d = "%s:\\" % L
+        if d not in drives and os.path.isdir(d):
+            drives.append(d)
+    cands = []
+    for d in drives:
+        for sub in ("YJKS", "YJK", "盈建科", "Program Files", "Program Files (x86)"):
+            root = os.path.join(d, sub)
+            if not os.path.isdir(root):
+                continue
+            cands.append(root)
+            for name in sorted(os.listdir(root)):
+                p = os.path.join(root, name)
+                if os.path.isdir(p) and name.upper().startswith("YJK"):
+                    cands.append(p)
+    for p in sorted(cands, reverse=True):          # 版本号大的在前
+        if os.path.isdir(os.path.join(p, "STCAD")):
+            return p
+    return cands[0] if cands else None
 
 
 def do_dll(verbose=True):
