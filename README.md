@@ -159,25 +159,28 @@ Anaconda 假设 / 具体工程名 / 写死的等级表·柱号分组表；配显
 
 ---
 
-## 五之二、本仓库带了什么、没带什么
+## 五之二、本仓库带了什么、许可是怎么分的
 
-克隆下来先跑一次：
+**开箱即用**：克隆下来就能跑（含官方客户端 DLL 与离线参考集）。第三方内容与许可见
+[`NOTICE.md`](NOTICE.md) —— 厂商 DLL 与 `yjk-dev-refs/` 的转载**不适用**本仓库的
+[`LICENSE`](LICENSE)，各自版权归权利人，若要再分发到别处请自行确认授权。
+
+万一 DLL 缺失或不匹配（换了 YJK 版本、只拷了部分文件），跑一次体检与补齐：
 
 ```powershell
-python fetch_vendor_refs.py --check      # 看缺什么
-python fetch_vendor_refs.py              # 把厂商资料补到本地（可选）
+python fetch_vendor_refs.py --check      # 看缺什么、本机 YJK 装在哪
+python fetch_vendor_refs.py              # 能取到就补齐（从本机 YJK 安装目录 / 官方公开仓库）
 ```
 
-| 内容 | 本仓库 | 原因 |
+| 内容 | 本仓库 | 说明 |
 | --- | --- | --- |
-| 五个技能的代码与文档、根文档 | 带 | 本包自己的内容 |
-| `yjk-auto-drive/assets/` 里的厂商二进制（`YJKAPI.dll` 等） | 不带 | 厂商二进制；本机 YJK 安装目录或官方公开仓库都能取到，`fetch_vendor_refs.py --dll` 一键补 |
-| `yjk-dev-refs/` 里来自 `csharp-yjks`（木兰宽松许可证 v2）、`py-yjks`（Apache-2.0）的转载 | 不带 | 许可允许再分发，但正文体积大；`fetch_vendor_refs.py --refs` 从官方公开仓库取 |
-| `yjk-dev-refs/` 里来自 `yjkapi_-python`（仓库内**无 LICENSE**）的 8.x 文档与案例 | 不带 | 未见许可声明，版权归北京盈建科软件股份有限公司；需要的人请自行确认授权后取 |
+| 五个技能的代码与文档、根文档 | 带 | 本仓库原创部分（MIT，见 `LICENSE`） |
+| `yjk-auto-drive/assets/`（`YJKAPI.dll`、`YAPIData.dll`） | 带 | 盈建科官方客户端 DLL，来自官方公开仓库 `csharp-yjks` 7.1 分支 |
+| `yjk-dev-refs/`（官方二次开发资料转载，117 个文件） | 带 | 来源与许可逐项列在 `NOTICE.md`：`csharp-yjks`（木兰宽松许可证 v2）、`py-yjks`（Apache-2.0）、`yjkapi_-python`（仓库内无 LICENSE，按其公开发布状态转载） |
 
-不带这些**不影响技能运行**：找 DLL 的候选链在命中失败后会继续往下找
+即使这两个 DLL 都没有，技能也能运行：找 DLL 的候选链会继续往下找
 （环境变量 `YJKAPI_DLL` → 技能 `assets/` → 用户缓存 `~/.yjk-auto/` → YJK 安装目录），
-`yjk_probe.py` 会打印命中了哪一个；参考集只是离线查阅资料。
+`yjk_probe.py` 会打印命中了哪一个。
 
 ---
 
@@ -188,11 +191,13 @@ yjk-skills-package/
 ├── README.md                     # 本文件
 ├── INSTALL.md                    # 安装与验收
 ├── AGENT-COMPAT.md               # 换 agent / IDE 前必读（前置条件 / 环境变量 / 自检六步）
+├── NOTICE.md                     # 第三方内容与许可声明（厂商 DLL / 官方资料转载）
+├── LICENSE                       # MIT（只覆盖本仓库原创部分）
 ├── 00-先读我.txt                 # 一段话上手
-├── fetch_vendor_refs.py          # 按需补齐厂商 DLL / 官方参考集
+├── fetch_vendor_refs.py          # 体检/补齐厂商 DLL 与官方参考集
 ├── yjk-auto-drive/               # 底座
 │   ├── SKILL.md
-│   ├── assets/                   # 官方客户端 DLL 存放处（DLL 自取，见 assets/README.md）
+│   ├── assets/                   # 官方客户端 DLL（已内置可用的一份）
 │   ├── references/               # 装机清单 / 命令全表 / IPC 协议 / 排查
 │   └── scripts/
 ├── column-section-opt/

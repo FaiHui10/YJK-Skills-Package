@@ -1,20 +1,20 @@
 # -*- coding: utf-8 -*-
-r"""把"未随仓库分发"的厂商资料补回本地：官方客户端 DLL + YJK 官方二次开发参考集。
+r"""体检并补齐厂商资料：官方客户端 DLL + YJK 官方二次开发参考集。
 
-为什么这些文件不在仓库里
-------------------------
-* `yjk-auto-drive/assets/*.dll`：**厂商二进制**（盈建科官方客户端 `YJKAPI.dll`）。
-  二进制不适合放进他人仓库，而它本来就能从官方公开仓库或本机 YJK 安装目录取到。
-* `yjk-dev-refs/`：YJK 官方二次开发文档与示例源码的**转载**。其中
-  `csharp-yjks`（木兰宽松许可证 v2）、`py-yjks`（Apache-2.0）允许再分发，
-  但 `yjkapi_-python` 仓库**未见 LICENSE 声明**，因此本仓库只带索引与来源说明，
-  正文请按下面第 2 步从官方公开仓库取。
+仓库里已经带了这两样，这个脚本用于"缺了/不匹配时补回来"
+--------------------------------------------------------
+* `yjk-auto-drive/assets/*.dll`：盈建科官方客户端 `YJKAPI.dll`（及依赖 `YAPIData.dll`）。
+  取自官方公开仓库 `csharp-yjks` 的 7.1 分支，也在本机 YJK 安装目录里。
+  换 YJK 版本或只拷了部分文件时可能缺失/不匹配 —— 用 `--check` 看，`--dll` 补。
+* `yjk-dev-refs/`：官方二次开发文档与示例源码的转载（117 个文件）。
+  来源与许可逐项列在 `NOTICE.md`；其中 `yjkapi_-python` 仓库内没有 LICENSE，
+  按其公开发布状态转载。要更新到官方最新，用 `--refs` 重新克隆（存到 `_src/`）。
 
 用法
 ----
-    python fetch_vendor_refs.py --check          # 只体检：缺什么、能不能取
+    python fetch_vendor_refs.py --check          # 只体检：缺什么、本机 YJK 装在哪
     python fetch_vendor_refs.py --dll            # 只补 DLL
-    python fetch_vendor_refs.py --refs           # 只克隆官方参考仓库
+    python fetch_vendor_refs.py --refs           # 只克隆官方参考仓库到 _src/
     python fetch_vendor_refs.py                  # 两样都补
 
 取不到也能用
@@ -132,8 +132,8 @@ def do_refs(verbose=True):
             print("       失败：git clone 返回 %d（网络不通？）" % r.returncode)
             rc = 1
     print("")
-    print("提示：`%s` 仓库内**没有 LICENSE 文件**，本脚本默认不取。" % NO_LICENSE_REPO[0])
-    print("      需要 8.x 新 API 文档/案例时请自行确认授权后执行：")
+    print("另外：`%s` 仓库内**没有 LICENSE 文件**（见 NOTICE.md），" % NO_LICENSE_REPO[0])
+    print("      本仓库已按其公开发布状态转载了它的 8.x 文档与案例；要更新到官方最新，执行：")
     print("        git clone --depth 1 %s %s"
           % (NO_LICENSE_REPO[1], os.path.join(REFS, "_src", NO_LICENSE_REPO[0])))
     print("")
@@ -143,9 +143,12 @@ def do_refs(verbose=True):
 
 def do_check():
     dll = os.path.join(ASSETS, "YJKAPI.dll")
-    print("YJKAPI.dll        : %s" % ("有" if os.path.exists(dll) else "缺"))
-    print("yjk-dev-refs/     : %s" % ("有" if os.path.isdir(os.path.join(REFS, "04-接口说明"))
-                                      else "缺（仓库内只带索引与来源说明）"))
+    yap = os.path.join(ASSETS, "YAPIData.dll")
+    print("YJKAPI.dll        : %s" % ("有" if os.path.exists(dll) else "缺（用 --dll 补）"))
+    print("YAPIData.dll      : %s" % ("有" if os.path.exists(yap) else "缺（视版本需要）"))
+    print("yjk-dev-refs/     : %s" % ("有（117 个文件）"
+                                      if os.path.isdir(os.path.join(REFS, "04-接口说明"))
+                                      else "缺（用 --refs 从官方公开仓库取）"))
     print("YJK 安装目录      : %s" % (find_yjk_dir() or "未找到"))
     print("git               : %s" % (shutil.which("git") or "未安装"))
     return 0

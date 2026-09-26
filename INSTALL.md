@@ -5,14 +5,15 @@
 > 换 agent / IDE 前先读 [`AGENT-COMPAT.md`](AGENT-COMPAT.md)（硬前置条件、环境变量、
 > 首次自检步骤）。本文只讲怎么装到本机。
 
-> 从 GitHub 克隆的话，先补一次厂商资料（官方客户端 DLL / 离线参考集）：
+> 仓库里已内置官方客户端 DLL 与离线参考集，克隆下来即可用。若 DLL 缺失或与你的
+> YJK 版本不匹配（只拷了部分文件、换了版本），跑一次体检与补齐：
 >
 > ```powershell
-> python fetch_vendor_refs.py --check      # 看缺什么
-> python fetch_vendor_refs.py              # 能取到就补上（可选，不补也能跑）
+> python fetch_vendor_refs.py --check      # 看缺什么、本机 YJK 装在哪
+> python fetch_vendor_refs.py              # 从本机 YJK 安装目录 / 官方公开仓库补齐
 > ```
 >
-> 见 README 的「本仓库带了什么、没带什么」。
+> 第三方内容与许可见 [`NOTICE.md`](NOTICE.md)；见 README 的「本仓库带了什么、许可是怎么分的」。
 
 ---
 
