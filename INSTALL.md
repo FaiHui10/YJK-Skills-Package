@@ -22,7 +22,7 @@
 | 项 | 要求 | 说明 |
 |---|---|---|
 | 操作系统 | Windows | 依赖 Win32 窗口消息与命名事件 |
-| YJK | **6.1 或更高**（7.x 更好） | 需要有 `yjks.exe` 与 `YjkLauncher.exe`；本文按 7.1 说明 |
+| YJK | **6.1 或更高**（6.x / 7.x / 8.x 均可） | 需要有 `yjks.exe` 与 `YjkLauncher.exe`；6/7 用技能内置 `assets/YJKAPI.dll`，8.x 用安装根 `YJKAPI.dll`（走 `initConfig`/`RunYJK`/`exit`）。本文按 7.1 说明，8.x 差异见 `yjk-auto-drive/SKILL.md` |
 | Python | **3.10 ~ 3.13** | 需要 `pythonnet`（`clr`）、`openpyxl`、`psutil` |
 | 磁盘 | 无特殊要求 | 技能本身很轻（DLL 约 300 KB） |
 

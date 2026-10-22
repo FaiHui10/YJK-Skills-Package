@@ -483,6 +483,8 @@ verify_results.py <工程>\设计结果 --db <模型.ydb> --json verify.json
 | `common.py` | 配置加载、柱位分组、单价、配筋解析等公共函数 |
 | `ydb_lint.py` | 模型库体检（ID 越界、引用悬空、层不自洽） |
 | `split_stdflr.py` | 把"1 个标准层 + N 个自然层"拆成 N 个标准层（逐层变截面/变等级的前置）；自带引用自检、`idNewBzc` 自检（含悬空与空表两类盲区、`tblFloor` 为空不报"全部一致"）、`No_` 重排读回校验；**任一不过退出码 1**（文件已写出，但别拿去导入/计算） |
+| `real_opt.py` | **本地增强**：真实工程柱截面选型（模式 B 的独立实现）。从 `设计结果\wpj*.out` 读现状 → 按标准层×同截面分组 → 闭式解最小可行截面 → 竖向单调包络 → 可选 `--write-ydb` 直接产出"截面+等级都改好"的可导入库；`--compare` 做收敛判定。只用标准库，写库时才依赖 yjk-colmodel 的 `yjkio.py` |
+| `yjkw.py` / `env.py` / `click.py` / `yjk_drive.py` / `yjk_cleanup.py` | **本地增强**：早期自建的 YJK 读写/环境探测/界面辅助小工具；新流程优先用 `yjk-auto-drive` 与 `yjk-colmodel`，这些保留作兼容 |
 
 ## 目录结构
 

@@ -456,6 +456,16 @@ def t_license_pause_state_machine():
             def config_flag_ok():
                 return True, None
 
+            # boot_yjks 会先判版本（>=8 走 initConfig+RunYJK 分支）；
+            #   桩必须照真实签名返回，"v" 不是版本号 → None → 走 6/7 分支。
+            @staticmethod
+            def version_major(version=None, root=None):
+                return None
+
+            @staticmethod
+            def version_xyz(version=None, root=None):
+                return None
+
         A.spawn = lambda *a, **k: None
         A.yjks_pids = lambda: [getattr(A, "_SC_PID")]
         A._SC_PID = os.getpid()
@@ -1588,6 +1598,79 @@ def golden(workdir, expect=None, dump=None):
     return 1 if bad else 0
 
 
+def t_version_8x():
+    print("T34 版本适配（6/7/8）与 8.x 客户端能力")
+    P = A.P
+    check("8.1.0 -> 8", P.version_major("8.1.0"), 8)
+    check("7.1.0 -> 7", P.version_major("7.1.0"), 7)
+    check("6.1.0 -> 6", P.version_major("6.1.0"), 6)
+    check("None -> None", P.version_major(None), None)
+    check('"8.1" -> "8.1.0"', P.version_xyz("8.1"), "8.1.0")
+    check('"8" -> "8.0.0"', P.version_xyz("8"), "8.0.0")
+    check('"7.1.0" -> "7.1.0"', P.version_xyz("7.1.0"), "7.1.0")
+    check("目录名推版本（YJKS_8_1_0）", P.version_major(root=r"D:\x\YJKS_8_1_0"), 8)
+    yp = P.find_yjk_python(None)
+    check("find_yjk_python 返回键集合", sorted(yp.keys()), ["dir", "exe", "tag", "yjkapi"])
+    for n in ("capabilities", "configure", "run_yjk", "close"):
+        check_true("Client 具备 8.x 接口 %s" % n, hasattr(A.Client, n))
+    check("DLL 探测返回 caps（8.x 能力位）", "caps" in P.find_yjkapi_dll(verify=False), True)
+
+
+def t_boot_8x():
+    """T35：8.x 启动路径必须走 initConfig→RunYJK→initConfig(pid)，不能等 6/7 的命名事件。
+
+    实测 8.1 根本不存在 Global\\ShareMemoryEvent / Global\\WaitResaultEvent，
+    沿用 6/7 的 events_alive 判就绪会一直等到超时（活体测试已复现过 150s 超时）。
+    这里把 Client 打桩，只验调用顺序与返回值，不启真 YJK。
+    """
+    print("T35 8.x 启动路径（initConfig→RunYJK→initConfig(pid)）")
+    saved = {k: getattr(A, k) for k in ("Client", "rt_yjk", "yjks_pids", "spawn")}
+    tmp = tempfile.mkdtemp(prefix="selfchk8x_")
+    calls = []
+
+    class _FakeClient:
+        def __init__(self, *a, **k):
+            self.has_init_config = True
+
+        def configure(self, version=None, invisible=False, pid=-1):
+            calls.append(("initConfig", version, invisible, pid))
+            return "配置初始化成功"
+
+        def run_yjk(self, exe):
+            calls.append(("RunYJK", exe))
+            return "启动盈建科成功!"
+
+    try:
+        A.Client = _FakeClient
+        A.spawn = lambda *a, **k: None
+        A.yjks_pids = lambda: [4321]
+        A.rt_yjk = lambda: {"exe": r"D:\y\yjks.exe", "root": r"D:\y",
+                            "source": "stub", "version": "8.1.0"}
+        pid, ok = A.boot_yjks(tmp, wait_ipc=5, verbose=False, invisible=True)
+        check("8.x 启动返回 pid", pid, 4321)
+        check("8.x 启动判定成功", ok, True)
+        check("8.x 调用顺序", [c[0] for c in calls], ["initConfig", "RunYJK", "initConfig"])
+        check("首次 initConfig 未绑 pid", calls[0][3], -1)
+        check("首次 initConfig 版本规范化", calls[0][1], "8.1.0")
+        check("二次 initConfig 绑定真实 pid", calls[2][3], 4321)
+        check("Invisible 透传到 initConfig", calls[0][2], True)
+
+        # 反例：8.x 客户端起不来时必须报失败，而不是退回 6/7 的 spawn 白等
+        class _Boom:
+            def __init__(self, *a, **k):
+                raise RuntimeError("dll 不可用")
+
+        calls[:] = []
+        A.Client = _Boom
+        pid2, ok2 = A.boot_yjks(tmp, wait_ipc=1, verbose=False)
+        check("8.x 客户端异常 -> 失败", (pid2, ok2), (None, False))
+        check("8.x 客户端异常时不得 spawn 6/7 启动", len(calls), 0)
+    finally:
+        for k, v in saved.items():
+            setattr(A, k, v)
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main():
     _utf8_console()
     ap = argparse.ArgumentParser()
@@ -1616,6 +1699,8 @@ def main():
     t_ps_and_union()
     t_honest_kill()
     t_dead_shell()
+    t_version_8x()
+    t_boot_8x()
     t_takeoff_macro()
     t_import_check()
     t_dir_mismatch()

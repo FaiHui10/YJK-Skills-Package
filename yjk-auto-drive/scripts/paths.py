@@ -194,6 +194,31 @@ def _version_of(root):
     return None
 
 
+def version_major(version=None, root=None):
+    """主版本号：6 / 7 / 8；识别不到返回 None。
+
+    6.x 与 7.x 共用 RunCmd 通道；8.x 起增加 initConfig/RunYJK/ControlConfig/Pid，
+    并带 8.x 新 API（消能器/填充墙/加固/楼梯/加腋/蒙皮/隔震支座/基础 …）。
+    """
+    v = version or (_version_of(root) if root else None)
+    if not v:
+        return None
+    m = re.match(r"\s*(\d+)", str(v))
+    return int(m.group(1)) if m else None
+
+
+def version_xyz(version=None, root=None):
+    """规范成 X.Y.Z（给 8.x 的 ControlConfig.Version 用）。"""
+    v = version or (_version_of(root) if root else None)
+    if not v:
+        return None
+    nums = re.findall(r"\d+", str(v))
+    if not nums:
+        return None
+    nums = (nums + ["0", "0"])[:3]
+    return ".".join(nums)
+
+
 def all_install_roots():
     """所有候选安装根（**不提前返回**，四条链全跑）。
 
@@ -242,7 +267,7 @@ def find_yjk_install():
                 return info
         # 该链未直接命中：候选目录可能指向"上级"，再补一层常见子目录名
         for r in roots:
-            for sub in ("", "YJKS_7_1_0", "YJKS_8_1_0"):
+            for sub in ("", "YJKS_6_1_0", "YJKS_7_1_0", "YJKS_8_0_0", "YJKS_8_1_0"):
                 exe = os.path.join(r, sub, "yjks.exe")
                 if os.path.exists(exe):
                     root = os.path.join(r, sub)
@@ -347,46 +372,88 @@ def write_config_flag(value="True"):
 
 # ================================================================ 官方客户端 DLL
 def _dll_kind(path):
-    """判断该 DLL 是否含可用的 YJKSControl 类型；返回 (kind, types)。"""
+    """判断该 DLL 是否含可用的 YJKSControl 类型；返回 (kind, types, caps)。
+
+    ★ 必须 `chdir` + `LoadFrom`：8.1 安装根的 YJKAPI.dll 依赖同目录原生库，
+      `Assembly.LoadFile` 会抛 ReflectionTypeLoadException（7.1 的 YJKIPC 版不受影响）。
+    caps 记录 8.x 专有静态方法，供上层决定走哪条启动路径。
+    """
     try:
         import clr                                            # noqa: F401
         from System.Reflection import Assembly
-        asm = Assembly.LoadFile(path)
-        names = [t.FullName for t in asm.GetTypes()]
+        d = os.path.dirname(os.path.abspath(path))
+        cwd = _cwd()
+        try:
+            os.chdir(d)
+            if d not in sys.path:
+                sys.path.insert(0, d)
+            asm = Assembly.LoadFrom(path)
+            try:
+                names = [t.FullName for t in asm.GetTypes()]
+            except Exception as e:                             # noqa: BLE001
+                names = [t.FullName for t in getattr(e, "Types", []) if t is not None]
+        finally:
+            if cwd:
+                try:
+                    os.chdir(cwd)
+                except OSError:
+                    pass
     except Exception:                                          # noqa: BLE001
-        return None, []
+        return None, [], {}
     for ct in CONTROL_TYPES:
         if ct in names:
-            return ct, names
-    return None, names
+            caps = {}
+            try:
+                mm = {m.Name for m in asm.GetType(ct).GetMethods()}
+                caps = {"run_cmd": "RunCmd" in mm,
+                        "initConfig": "initConfig" in mm,
+                        "RunYJK": "RunYJK" in mm,
+                        "exit": "exit" in mm,
+                        "SelectYjkProcess": "SelectYjkProcess" in mm,
+                        "IPC_Pipe": "IPC_Pipe" in mm,
+                        "IPC_ShareMem": "IPC_ShareMem" in mm}
+            except Exception:                              # noqa: BLE001
+                pass
+            return ct, names, caps
+    return None, names, {}
 
 
 def find_yjkapi_dll(explicit=None, verify=True):
-    """定位官方客户端 YJKAPI.dll。
+    """定位官方客户端 YJKAPI.dll，**按 YJK 主版本优选**。
 
-    优先级：显式传入 -> 环境变量 YJKAPI_DLL -> 技能 assets/ -> 用户缓存
-            -> YJK 安装目录 STCAD/ -> 官方仓库检出目录 -> 全盘浅扫。
+    6.x：安装目录没有可用的控制 DLL → 用技能内置 7.1 仓库版（RunCmd 2 参，兼容）。
+    7.x：优先技能 assets / 用户缓存里的 7.1 仓库版；安装目录 STCAD\\YJKSControl.dll 兜底。
+    8.x：**优先安装根目录的 YJKAPI.dll** —— 只有它含 initConfig / RunYJK / ControlConfig
+         等 8.x 新能力；7.1 版 DLL 在 8.x 上只能跑 RunCmd，会失去 Pid 定向与静默启动。
 
     kind == 'YJKIPC.YJKSControl' 是官方仓库（csharp-yjks 7.1 分支）版本，首选；
     kind == 'YJKSControl' 是 YJK 安装目录自带的 STCAD 版本，RunCmd 是 3 参（含 out），
     作为兜底（yjk_auto.Client 会自动适配签名）。
+
+    返回 dict(path, kind, source, caps, notes)。
     """
-    info = {"path": None, "kind": None, "source": None, "notes": []}
+    info = {"path": None, "kind": None, "source": None, "caps": {}, "notes": []}
     cands = []
     if explicit:
         cands.append(("命令参数", explicit))
     if os.environ.get("YJKAPI_DLL"):
         cands.append(("环境变量 YJKAPI_DLL", os.environ["YJKAPI_DLL"]))
-    cands.append(("技能 assets", os.path.join(ASSETS, "YJKAPI.dll")))
-    cands.append(("用户缓存", os.path.join(USER_CACHE, "YJKAPI.dll")))
     ins = find_yjk_install()
-    if ins["root"]:
+    root = ins.get("root")
+    maj = version_major(ins.get("version"))
+
+    # 8.x：安装根 YJKAPI.dll 是第一顺位
+    if root and maj and maj >= 8:
+        cands.append(("YJK 安装根（8.x 新 API）", os.path.join(root, "YJKAPI.dll")))
+    cands.append(("技能 assets（7.1 仓库版）", os.path.join(ASSETS, "YJKAPI.dll")))
+    cands.append(("用户缓存", os.path.join(USER_CACHE, "YJKAPI.dll")))
+    if root:
         # 安装目录自带件只作兜底：STCAD\YJKSControl.dll 含类型 `YJKSControl`
         # （RunCmd 为 3 参含 out），STCAD\YJKAPI.dll **没有**控制类型。
         cands.append(("YJK 安装目录 STCAD/控制件",
-                      os.path.join(ins["root"], "STCAD", "YJKSControl.dll")))
-        cands.append(("YJK 安装目录 STCAD", os.path.join(ins["root"], "STCAD", "YJKAPI.dll")))
-        cands.append(("YJK 安装目录", os.path.join(ins["root"], "YJKAPI.dll")))
+                      os.path.join(root, "STCAD", "YJKSControl.dll")))
+        cands.append(("YJK 安装目录 STCAD", os.path.join(root, "STCAD", "YJKAPI.dll")))
+        cands.append(("YJK 安装目录", os.path.join(root, "YJKAPI.dll")))
     for base in (os.path.expanduser("~"),):
         for pat in ("*/csharp-yjks*/**/YJKAPI.dll", "*/yjk*/**/YJKAPI.dll",
                     "*/*/不依赖YJK案例/dll/YJKAPI.dll"):
@@ -404,9 +471,13 @@ def find_yjkapi_dll(explicit=None, verify=True):
         if not verify:
             info.update(path=p, kind="unverified", source=src)
             return info
-        kind, names = _dll_kind(p)
+        kind, names, caps = _dll_kind(p)
         if kind:
-            info.update(path=p, kind=kind, source=src)
+            info.update(path=p, kind=kind, source=src, caps=caps)
+            if maj and maj >= 8 and not caps.get("initConfig"):
+                info["notes"].append(
+                    "注意：选中 %s 但该 DLL 不含 initConfig（8.x 新 API）。"
+                    "8.x 建议优先使用安装根目录的 YJKAPI.dll。" % p)
             if kind == "YJKSControl":
                 info["notes"].append(
                     "该 DLL 来自 YJK 安装目录（%s），RunCmd 为 3 参重载；"
@@ -415,9 +486,9 @@ def find_yjkapi_dll(explicit=None, verify=True):
             return info
         info["notes"].append("跳过 %s（%s）：无 YJKSControl 类型" % (p, src))
     info["notes"].append(
-        "未找到可用客户端 DLL。请取 gitee yjk-opensource/csharp-yjks **7.1 分支**的 "
-        "不依赖YJK案例/dll/YJKAPI.dll，放到 %s（或设环境变量 YJKAPI_DLL）"
-        % os.path.join(ASSETS, "YJKAPI.dll"))
+        "未找到可用客户端 DLL。6.x/7.x 可用 gitee yjk-opensource/csharp-yjks **7.1 分支**的 "
+        "不依赖YJK案例/dll/YJKAPI.dll；8.x 用安装根目录 YJKAPI.dll。"
+        "也可设环境变量 YJKAPI_DLL 或放到 %s" % os.path.join(ASSETS, "YJKAPI.dll"))
     return info
 
 
@@ -597,12 +668,42 @@ def find_python(probe=True):
     return info
 
 
+# YJK 安装目录内置 Python（8.x 起集成 YJKAPI；7.x 也带 Python36/38 供 yjks_pyload）
+YJK_PY_DIRS = ("python310", "Python310", "python39", "Python39", "python38", "Python38",
+               "python36", "Python36", "python34", "Python34")
+
+
+def find_yjk_python(root=None):
+    """定位 YJK 安装目录里的 Python（用于 `yjks_pyload` 的依赖脚本环境）。
+
+    8.x 官方 README：把 SDK 的 8.x.rar 解压到安装目录后，用安装目录的 python3.10
+    解释器；依赖 YJK 运行时的脚本通过 `yjks_pyload <py路径>,<函数名>` 执行。
+    返回 {exe, dir, tag, yjkapi}；找不到时 exe=None。
+    """
+    root = root or find_yjk_install().get("root")
+    out = {"exe": None, "dir": None, "tag": None, "yjkapi": False}
+    if not root:
+        return out
+    for d in YJK_PY_DIRS:
+        exe = os.path.join(root, d, "python.exe")
+        if os.path.exists(exe):
+            out.update(exe=exe, dir=os.path.join(root, d), tag=d)
+            break
+    if out["exe"]:
+        for site in ("Lib/site-packages", "lib/site-packages"):
+            out["yjkapi"] = out["yjkapi"] or os.path.isdir(
+                os.path.join(out["dir"], site, "YJKAPI"))
+    return out
+
+
 # ================================================================ 汇总
 def doctor(proj_dir=None, dll=None):
     ins = find_yjk_install()
+    ins["major"] = version_major(ins.get("version"))
     cfgs = find_config_inis()
     api = find_yjkapi_dll(dll)
     py = find_python()
+    ypy = find_yjk_python(ins.get("root"))
     has_flag, flag_path = config_flag_ok()
     running = []
     try:
@@ -614,7 +715,7 @@ def doctor(proj_dir=None, dll=None):
     return {
         "yjk": ins, "config_inis": cfgs, "config_flag_ok": has_flag,
         "config_flag_path": flag_path, "yjkapi": api, "python": py,
-        "yjks_running": running, "proj_dir": proj_dir,
+        "yjk_python": ypy, "yjks_running": running, "proj_dir": proj_dir,
         "user_cache": USER_CACHE, "assets": ASSETS,
     }
 

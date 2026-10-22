@@ -10,6 +10,10 @@
 换 agent / IDE 前先读 [`AGENT-COMPAT.md`](AGENT-COMPAT.md)：硬前置条件、一次性环境准备、
 环境变量、首次自检步骤、编码约定。
 
+**YJK 版本**：6.x / 7.x / 8.x 都支持。8.x 用安装根 `YJKAPI.dll`，启动走官方
+`initConfig → RunYJK → initConfig(Pid)`（不再依赖 6/7 的命名事件，也不用敲
+`yjksipccontrol`）；差异与实测记录见 `yjk-auto-drive/SKILL.md` 的「版本适配」。
+
 ---
 
 ## 一、包含哪些技能

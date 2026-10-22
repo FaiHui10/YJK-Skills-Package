@@ -1,6 +1,6 @@
 ---
 name: yjk-auto-drive
-description: 驱动盈建科（YJK）结构设计软件全自动算模型：经官方 YJKSControl IPC 通道零人工点击完成「清场 → 启动 → 新建工程 → 导入模型 → 预处理 → 计算 → 读设计结果」，含单实例隔离、模态框看门狗、总信息（前处理计算参数）按名读写与回读校验。本技能是整套技能的**底座（纯通路，不含业务逻辑）**，其余技能都通过它驱动 YJK。当用户要求"自动跑 YJK""驱动 YJK 计算""批量算模型""导入 ydb 并计算""无人值守跑结构计算""检查 YJK 环境""改总信息/抗震参数"时使用。
+description: 驱动盈建科（YJK 6.x / 7.x / 8.x）结构设计软件全自动算模型：经官方 YJKSControl IPC 通道零人工点击完成「清场 → 启动 → 新建工程 → 导入模型 → 预处理 → 计算 → 读设计结果」，含单实例隔离、模态框看门狗、总信息（前处理计算参数）按名读写与回读校验，并适配 8.x 的 initConfig/Pid 定向/Invisible 静默/RunYJK/exit。本技能是整套技能的**底座（纯通路，不含业务逻辑）**，其余技能都通过它驱动 YJK。当用户要求"自动跑 YJK""驱动 YJK 计算""批量算模型""导入 ydb 并计算""无人值守跑结构计算""检查 YJK 环境""改总信息/抗震参数"时使用。
 agent_created: true
 ---
 
@@ -14,6 +14,49 @@ kill 全部 yjks → 确保 YjkLauncher 在跑 → yjks.exe 无参启动
 → 导入校验（逐表核对 .ydb↔.ymd，不通过就停手）
 → 预处理链 → 计算链 → 读 设计结果\wpj*.out
 ```
+
+## 版本适配（6.x / 7.x / 8.x）
+
+| 能力 | 6.x | 7.x | 8.x |
+|---|---|---|---|
+| `RunCmd` IPC 通道 | 是（用 7.1 仓库 DLL） | 是 | 是（安装根 `YJKAPI.dll`） |
+| `Config.ini [YJKSControl] Flag=True` | 是 | 是 | 是 |
+| `initConfig(ControlConfig)` | — | — | **必须先调** |
+| `ControlConfig.Pid` 定向 / `Invisible` 静默 | — | — | 是 |
+| `RunYJK(exe)` 由 API 启动 | — | — | 是 |
+| `exit()` 优雅退出 | — | — | 是 |
+| `SelectYjkProcess` / `IPC_Pipe` / `IPC_ShareMem` | — | — | 是 |
+| `yjks_pyload` 依赖脚本 | 是 | 是 | 是（用安装目录 Python） |
+| 8.x 新构件 API | — | — | 是 |
+
+`paths.py` 自动按主版本选 DLL：**8.x → 安装根 `YJKAPI.dll` 优先**；7.x → 技能
+`assets/` 的 7.1 仓库版；6.x → 同样用 7.1 仓库版（6.1 安装目录没有可用的控制 DLL）。
+`status` 打印 DLL 能力矩阵，`probe` 对版本不匹配给出提示。
+
+**8.x 用法差异**
+
+- **启动路径不同（实测 8.1）**：6/7 靠 `Config.ini Flag=True` 自动开通道，再用
+  `Global\ShareMemoryEvent` / `Global\WaitResaultEvent` 判就绪；**8.x 没有这两个事件**，
+  通道由官方 API 建立。`boot_yjks()` 检测到主版本 ≥8 时自动改走：
+  `initConfig(Version, Invisible, Pid=-1)` → `RunYJK(yjks.exe)` → 等进程 →
+  `initConfig(..., Pid=真实pid)`。所以 8.x 不需要人工敲 `yjksipccontrol`。
+- **先 `initConfig` 再发命令**：`host` 在建工程前自动执行 `Client.configure()`；
+  官方 test04 明确要求，跳过时 8.x 命令可能静默不执行。
+- **接管已在运行的实例**：`host ... --pid <PID>`（不杀、不启动、不登记自有实例）。
+- **静默计算**：`--invisible`（`initConfig(Invisible=True)`），收尾可用 `Client.close()` 发 `exit`。
+- **8.x 的 `RunCmd` 返回 void**（没有字符串结果）。成功判据仍只认文件 mtime（铁律 4）。
+- **依赖 YJK 运行时的 Python 脚本**：用 `yjks_pyload "<py路径>,<函数名>"`，
+  解释器用安装目录内置 Python（`paths.find_yjk_python()` 自动定位）。
+
+8.x 新增建模/设计能力（命令与表结构见 `references/commands.md`）：隔震支座/特殊节点
+（`SpNode` + `SpNLProp`）、消能器（`XNQ_arrange` / `XNQSectCreateInfo`）、填充墙
+（`FillWall_Def` / `FillWall_arrange`）、加固（柱/梁/钢结构）、楼梯（`Stair_Def` /
+`stair_arrange`）、梁加腋（`BeamJYSect_Def` / `beamjy_arrange`）、板加腋
+（`SlabJYSect_Def` / `slabjy_arrange`）、蒙皮（`SkinCreateInfo` / `skin_arrange` /
+`skinLoad_arrange`）、层间板（`MidSlabCreateInfo`）、柱帽（`ColCapSect_Def`）、
+基础建模与设计结果（JCCAD）、智能辅助设计模型映射（`Hi_ModelMapping`）、联动回写
+（`Hi_AddToAndReadYjk` / `ReflecToYJK` / `RefreshToYJK` / `ReflectAndCreateYDB`）、
+有限元时程后处理（`Hi_API_YJKDTReport`）。
 
 ## 第一步永远是环境自检
 
@@ -36,11 +79,12 @@ $py = "<带 pythonnet 的 python.exe>"       # 见下面「用户需要做的基
 
 ## 用户需要做的基础工作（新电脑必读）
 
-只做一次，十分钟。详细版见 `references/setup-checklist.md`。
+只做一次，十分钟。详细版见 `references/setup-checklist.md`；
+**逐项打勾、含验收标准与失败对照的版本见 `references/deployment-checklist.md`**（新机器照它走）。
 
 | # | 要做的事                                            | 为什么                           | 怎么确认                           |
 | - | ----------------------------------------------- | ----------------------------- | ------------------------------ |
-| 1 | **装 YJK（6.1+ / 7.x）并能正常打开一个工程**                 | 驱动的前提；首启需能正常进界面               | 手动开一次 YJK 能进界面                 |
+| 1 | **装 YJK（6.1+ / 7.x / 8.x）并能正常打开一个工程**                 | 驱动的前提；首启需能正常进界面               | 手动开一次 YJK 能进界面                 |
 |   |                                                 |                               |                                |
 | 2 | **两处 `Config.ini` 补 `[YJKSControl] Flag=True`** | 只有这样才能"启动即开 IPC"，**免去人工键入命令** | `yjk_probe.py` 该项显示 OK         |
 | 3 | **准备一个带 pythonnet 的 Python 环境**                 | 用 `clr` 反射调用官方 DLL            | `python -c "import clr"` 不报错   |
@@ -56,6 +100,14 @@ $py = "<带 pythonnet 的 python.exe>"       # 见下面「用户需要做的基
 ```
 
 第 4 项的取件方式见 `assets/README.md`：`assets/` 已内置一份可用的 `YJKAPI.dll`（来自 gitee `yjk-opensource/csharp-yjks` 7.1 分支），换机器时把 `assets/` 一起拷过去即可；来源受限就从官方仓库取同名文件放进去。
+
+DLL 来源按版本区分（`paths.py` 会自动挑，通常不用手工指定）：
+
+| YJK 版本 | 首选 DLL | 说明 |
+|---|---|---|
+| 6.x | 技能 `assets/YJKAPI.dll`（7.1 仓库版） | 6.1 安装目录没有可用的控制 DLL |
+| 7.x | 技能 `assets/YJKAPI.dll`（7.1 仓库版） | 安装目录 `STCAD\YJKSControl.dll` 可兜底（3 参 RunCmd） |
+| 8.x | **安装根 `YJKAPI.dll`** | 只有它含 `initConfig`/`RunYJK`/`exit` 等 8.x 新 API |
 
 ## 命令
 

@@ -15,7 +15,9 @@ FC_DEFAULT = {"C25": 11.9, "C30": 14.3, "C35": 16.7, "C40": 19.1, "C45": 21.1,
 
 
 def load_config(path):
-    cfg = json.load(open(path, encoding="utf-8"))
+    # utf-8-sig：Windows 记事本 / PowerShell 存出来的 JSON 常带 BOM，
+    # 用 "utf-8" 读会直接 JSONDecodeError（第 1 列就炸）。
+    cfg = json.load(open(path, encoding="utf-8-sig"))
     g = cfg.setdefault("几何", {})
     g.setdefault("跨度X", 6000)
     g.setdefault("跨度Y", 6000)

@@ -807,33 +807,110 @@ def wait_until(pred, timeout: float = 10.0, interval: float = 0.5) -> float:
 
 # ---------------------------------------------------------------- 官方客户端
 class Client:
-    """官方控制客户端。自动适配两种来源的 DLL / 两种 RunCmd 签名。
+    """官方控制客户端。自动适配 6/7/8 三代 DLL 与多种 RunCmd 签名。
 
-    * `YJKIPC.YJKSControl`（csharp-yjks 官方仓库）: RunCmd(keyword, param) -> string
-    * `YJKSControl`（YJK 安装目录 STCAD 自带）    : RunCmd(keyword, param, out string)
+    * 6.x/7.x：`YJKIPC.YJKSControl`(RunCmd(kw,param)->string)
+      或安装目录 `YJKSControl`(RunCmd(kw,param,out string))
+    * 8.x：安装根 `YJKAPI.dll` 的 `YJKIPC.YJKSControl`
+      — RunCmd 返回 void；新增静态方法
+        `initConfig(ControlConfig)` / `RunYJK(exe)` / `exit()` /
+        `SelectYjkProcess()` / `IPC_Pipe` / `IPC_ShareMem` /
+        `GetWorkPath()` / `SetWorkPath(path)` / `startprocess(exe,args)`。
+      **8.x 必须先 initConfig 再发命令**（官方 test04），否则命令可能静默不执行。
 
-    **绝不调用 init()** —— 它会 WinExec 再拉起一个无窗口 yjks，正是多实例抢事件的元凶。
+    **绝不调用 init()** —— 7.x 的 init 会 WinExec 再拉起一个无窗口 yjks；
+    8.x 用 initConfig +（可选）RunYJK，二者都受 ControlConfig.Pid/Invisible 控制。
     """
 
     def __init__(self, dll: str | None = None):
         import clr                                             # noqa: F401
-        from System import Array, Object
+        from System import Array, Object, Activator
         from System.Reflection import Assembly
         info = P.find_yjkapi_dll(dll)
         if not info["path"]:
             raise RuntimeError("未找到可用的控制 DLL：\n  " + "\n  ".join(info["notes"]))
         self.dll = info["path"]
         self.kind = info["kind"]
-        asm = Assembly.LoadFile(self.dll)
+        self.caps = info.get("caps") or {}
+        # 8.1 安装根 DLL 依赖同目录原生库，必须 chdir + LoadFrom（LoadFile 会抛
+        # ReflectionTypeLoadException）
+        cwd = os.getcwd()
+        try:
+            os.chdir(os.path.dirname(os.path.abspath(self.dll)))
+            if os.path.dirname(os.path.abspath(self.dll)) not in sys.path:
+                sys.path.insert(0, os.path.dirname(os.path.abspath(self.dll)))
+            asm = Assembly.LoadFrom(self.dll)
+        finally:
+            try:
+                os.chdir(cwd)
+            except OSError:
+                pass
         T = asm.GetType(self.kind)
         if T is None:
             raise RuntimeError("DLL 内无类型 %s: %s" % (self.kind, self.dll))
+        self._asm, self._T = asm, T
+        self._Activator = Activator
         ms = [m for m in T.GetMethods() if m.Name == "RunCmd"]
         if not ms:
             raise RuntimeError("该 DLL 的 %s 无 RunCmd 方法: %s" % (self.kind, self.dll))
         self._m = min(ms, key=lambda m: len(m.GetParameters()))
         self._n = len(self._m.GetParameters())
         self._Array, self._Object = Array, Object
+        names = {m.Name for m in T.GetMethods()}
+        self.has_init_config = "initConfig" in names
+        self.has_run_yjk = "RunYJK" in names
+        self.has_exit = "exit" in names
+        self.has_select_process = "SelectYjkProcess" in names
+
+    def capabilities(self) -> dict:
+        return {"dll": self.dll, "kind": self.kind,
+                "initConfig": self.has_init_config, "RunYJK": self.has_run_yjk,
+                "exit": self.has_exit, "SelectYjkProcess": self.has_select_process}
+
+    def _config_type(self):
+        for n in ("YJKIPC.ControlConfig", "ControlConfig"):
+            try:
+                t = self._asm.GetType(n)
+            except Exception:                                  # noqa: BLE001
+                t = None
+            if t is not None:
+                return t
+        return None
+
+    def configure(self, version=None, invisible=False, pid=-1):
+        """8.x：initConfig(ControlConfig{Version,Invisible,Pid})。失败返回说明串。"""
+        if not self.has_init_config:
+            return "SKIP(该 DLL 无 initConfig，按 6/7 路径继续)"
+        ct = self._config_type()
+        if ct is None:
+            return "SKIP(找不到 ControlConfig 类型)"
+        cfg = self._Activator.CreateInstance(ct)
+        cfg.Version = version or "8.0.0"
+        cfg.Invisible = bool(invisible)
+        cfg.Pid = int(pid)
+        try:
+            return self._T.GetMethod("initConfig").Invoke(None, [cfg])
+        except Exception as e:                                 # noqa: BLE001
+            return "异常:" + repr(e)
+
+    def run_yjk(self, exe_path):
+        """8.x：由官方 API 启动 yjks（等价于 run. 之前官方要求先 configure）。"""
+        if not self.has_run_yjk:
+            return "SKIP(该 DLL 无 RunYJK)"
+        try:
+            return self._T.GetMethod("RunYJK").Invoke(None, [exe_path])
+        except Exception as e:                                 # noqa: BLE001
+            return "异常:" + repr(e)
+
+    def close(self):
+        """8.x：exit() 让静默启动的 yjks 自行退出（6/7 无此能力）。"""
+        if not self.has_exit:
+            return "SKIP(该 DLL 无 exit)"
+        try:
+            self._T.GetMethod("exit").Invoke(None, None)
+            return "OK"
+        except Exception as e:                                 # noqa: BLE001
+            return "异常:" + repr(e)
 
     def call(self, cmd: str, param: str = ""):
         args = (cmd, param) if self._n <= 2 else (cmd, param, "")
@@ -1105,8 +1182,56 @@ def _license_hint() -> str:
             % LICENSE_EXIT_CODE)
 
 
+def _boot_yjks_8x(ins: dict, workdir: str, wait_ipc: int = 150,
+                  verbose: bool = True, invisible: bool = False):
+    """8.x 启动路径：`initConfig(pid=-1)` → `RunYJK(exe)` → `initConfig(pid)`。
+
+    与 6/7 的区别（实测 8.1）：8.x 不再存在 `Global\\ShareMemoryEvent` /
+    `Global\\WaitResaultEvent`，通道由 `initConfig` 建立、由 `RunYJK` 拉起进程，
+    所以 6/7 的"等命名事件"判就绪在 8.x 上会一直等到超时（必须单独走这里）。
+    """
+    try:
+        cli = Client()
+    except Exception as e:                                     # noqa: BLE001
+        log("!! 8.x 控制 DLL 不可用：%s" % e)
+        return None, False
+    if not getattr(cli, "has_init_config", False):
+        log("!! 该 DLL 无 initConfig，无法按 8.x 官方流程启动")
+        return None, False
+    ver = P.version_xyz(ins["version"]) or "8.0.0"
+    r0 = cli.configure(ver, invisible=invisible, pid=-1)
+    if verbose:
+        log("  initConfig(%s, Invisible=%s, Pid=-1) -> %s" % (ver, invisible, r0))
+    if isinstance(r0, str) and (r0.startswith("异常") or r0.startswith("SKIP")):
+        return None, False
+    r1 = cli.run_yjk(ins["exe"])
+    if verbose:
+        log("  RunYJK(%s) -> %s" % (ins["exe"], r1))
+    if isinstance(r1, str) and (r1.startswith("异常") or r1.startswith("SKIP")):
+        return None, False
+    t0 = time.time()
+    pid = None
+    while time.time() - t0 < wait_ipc:
+        ps = yjks_pids()
+        if ps:
+            pid = ps[0]
+            break
+        time.sleep(1)
+    if not pid:
+        log("!! %.0fs 内 RunYJK 没有拉起 yjks（多为授权/许可问题；也见 `_yjk_license.need_user`）"
+            % wait_ipc)
+        return None, False
+    time.sleep(1)
+    r2 = cli.configure(ver, invisible=invisible, pid=pid)
+    if verbose:
+        log("  initConfig 绑定 Pid=%s -> %s（8.x 通道就绪，无需 yjksipccontrol）" % (pid, r2))
+    bad = isinstance(r2, str) and (r2.startswith("异常") or r2.startswith("SKIP"))
+    return pid, not bad
+
+
 def boot_yjks(workdir: str, wait_ipc: int = 150, verbose: bool = True,
-              on_license: str = "pause", license_timeout: int = 1800):
+              on_license: str = "pause", license_timeout: int = 1800,
+              invisible: bool = False):
     """无参启动 yjks（欢迎页），等 IPC 通道自动就绪。返回 (pid, ok)。
 
     授权/许可问题的处理（`on_license`）
@@ -1124,6 +1249,10 @@ def boot_yjks(workdir: str, wait_ipc: int = 150, verbose: bool = True,
         return None, False
     if verbose:
         log("YJK 安装=%s（来源：%s，版本 %s）" % (ins["root"], ins["source"], ins["version"]))
+    major = P.version_major(ins["version"]) or P.version_major(ins["root"])
+    if (major or 0) >= 8:
+        return _boot_yjks_8x(ins, workdir, wait_ipc=wait_ipc,
+                             verbose=verbose, invisible=invisible)
     ok_flag, cfgp = P.config_flag_ok()
     if not ok_flag:
         if verbose:
@@ -1863,6 +1992,8 @@ def cmd_status(args) -> None:
     es = events_alive()
     log("IPC 事件 %s = %s" % (EV_SHARE, es[0]))
     log("IPC 事件 %s = %s" % (EV_WAIT, es[1]))
+    if (P.version_major(rt_yjk().get("version")) or 0) >= 8:
+        log("  （8.x 不用这两个命名事件，通道由 initConfig 建立：上面 False 属正常）")
     dead = [i["pid"] for i in yj if i["kind"] == "dead"]
     if dead:
         log("  残壳 %s：0 线程（已终止待回收）→ 不阻断开工，也无法终止，重启即清" % dead)
@@ -2001,11 +2132,20 @@ def cmd_host(args) -> None:
     """
     workdir = os.path.normpath(args.dir)
     os.makedirs(workdir, exist_ok=True)
-    log("=== 0) 实例隔离预检（本工具只操作自有实例）===")
-    ins = instances()
-    own = own_pid()
-    log("  当前实例：%s" % describe(ins))
-    if not preflight(args, ins, own):
+    attach_pid = getattr(args, "pid", None)
+    if attach_pid:
+        log("=== 0) attach 模式：只接管 pid=%s（不杀、不启动、不登记自有实例）===" % attach_pid)
+        if int(attach_pid) not in yjks_pids():
+            log("!! 目标 pid=%s 不是正在运行的 yjks（现有：%s）" % (attach_pid, yjks_pids()))
+            raise SystemExit(3)
+        attach_pid = int(attach_pid)
+        log("  当前实例：%s" % describe([i for i in instances() if i["pid"] == attach_pid]))
+    else:
+        log("=== 0) 实例隔离预检（本工具只操作自有实例）===")
+        ins = instances()
+        own = own_pid()
+        log("  当前实例：%s" % describe(ins))
+    if not attach_pid and not preflight(args, ins, own):
         # 预检拒绝**必须**给非零退出码。
         #   以前这里直接 `return` → `main()` 返回 None → 进程退出码 **0**，
         #   而日志清清楚楚写着「本次未做任何操作」。任何按退出码判定的编排
@@ -2061,7 +2201,9 @@ def cmd_host(args) -> None:
             os.remove(ready_path(workdir))      # 会话结束 → send 重新变成"拒绝"
         except OSError:
             pass
-        if getattr(args, "keep", False):
+        if attach_pid:
+            log("attach 模式：不动目标实例 pid=%s（也不会关闭它）" % attach_pid)
+        elif getattr(args, "keep", False):
             log("--keep：保留自有实例（不清理）。下次 host 会把登记里的它当残留清掉")
         else:
             kill_own()
@@ -2171,20 +2313,28 @@ def _host(args) -> None:
     proj_yjk = os.path.normpath(os.path.join(workdir, name + ".yjk"))
 
     log("=== 工作目录 %s / 工程 %s ===" % (workdir, name))
-    log("=== 1) 清场（仅限自有实例；隔离预检已在第 0 步完成）===")
-    if own_pid():
-        kill_own()
-        time.sleep(1)
+    attach_pid = getattr(args, "pid", None)
+    if attach_pid:
+        log("=== 1) attach 模式：不清场、不启动 ===")
+        log("=== 2) 跳过 YjkLauncher（接管已有实例）===")
+        log("=== 3) 跳过启动，直接接管 pid=%s ===" % attach_pid)
+        pid, ok = int(attach_pid), True
     else:
-        log("无自有实例需要清理")
-    log("=== 2) 确保 YjkLauncher ===")
-    ensure_launcher()
-    log("=== 3) 启动 yjks（欢迎页）并等 IPC 通道 ===")
-    # 看门狗必须在**启动 yjks 之前**拉起：启动过程本身也可能弹框（无人应答就卡到超时）
-    start_dlgwatch()
-    pid, ok = boot_yjks(workdir, wait_ipc=getattr(args, "wait_ipc", 150),
-                        on_license=getattr(args, "on_license", "pause"),
-                        license_timeout=getattr(args, "license_timeout", 1800))
+        log("=== 1) 清场（仅限自有实例；隔离预检已在第 0 步完成）===")
+        if own_pid():
+            kill_own()
+            time.sleep(1)
+        else:
+            log("无自有实例需要清理")
+        log("=== 2) 确保 YjkLauncher ===")
+        ensure_launcher()
+        log("=== 3) 启动 yjks（欢迎页）并等 IPC 通道 ===")
+        # 看门狗必须在**启动 yjks 之前**拉起：启动过程本身也可能弹框（无人应答就卡到超时）
+        start_dlgwatch()
+        pid, ok = boot_yjks(workdir, wait_ipc=getattr(args, "wait_ipc", 150),
+                            on_license=getattr(args, "on_license", "pause"),
+                            license_timeout=getattr(args, "license_timeout", 1800),
+                            invisible=getattr(args, "invisible", False))
     if not ok:
         # 每一条中止路径都要进失败台账：否则 host 返回 0，
         #   而自动化调用方只看退出码 → 会把"一个动作都没做"当成成功（缺陷 L3/S01/S02）。
@@ -2195,9 +2345,12 @@ def _host(args) -> None:
             host_fail("IPC 通道未就绪（yjks 没能起来/连不上）")
         log("!! 通道未就绪，终止。先跑 `python yjk_probe.py` 看缺什么")
         return
-    own_claim(pid, rt_yjk().get("exe") or "", workdir)     # 登记自有实例
-    log("  已登记自有实例 pid=%s -> %s" % (pid, OWN_FILE))
-    if _DLGWATCH is not None:
+    if attach_pid:
+        log("  attach 模式：不登记自有实例（收尾也不会关它）")
+    else:
+        own_claim(pid, rt_yjk().get("exe") or "", workdir)     # 登记自有实例
+        log("  已登记自有实例 pid=%s -> %s" % (pid, OWN_FILE))
+    if _DLGWATCH is not None and not attach_pid:
         # 拿到自有 pid 后立刻把看门狗收窄到本实例。启动阶段只能 pid=None（那时还不知道
         #   pid），而那时**只登记不动手**（见 dlgwatch 的「作用范围」与审计 S55）：
         #   收窄之前它一个按钮都不点，所以不会碰到别人的 YJK。
@@ -2212,6 +2365,11 @@ def _host(args) -> None:
         log("!! 客户端初始化失败: %s" % e)
         return
     log("官方客户端就绪（%s，%s）" % (cli.kind, cli.dll))
+    # 8.x：先 initConfig(ControlConfig) 绑定本实例，否则首条命令可能静默不执行
+    if getattr(cli, "has_init_config", False):
+        ver = P.version_xyz(rt_yjk().get("version")) or "8.0.0"
+        res = cli.configure(ver, invisible=getattr(args, "invisible", False), pid=pid)
+        log("  8.x initConfig(Version=%s, Pid=%s) -> %s" % (ver, pid, res))
 
     log("=== 4) 在指定路径新建工程 ===")
     if not open_new_project(cli, proj_yjk, workdir,
@@ -2357,6 +2515,10 @@ def main() -> None:
                         "fail = 立刻以退出码 6 结束（无人值守编排用）")
     h.add_argument("--license-timeout", type=int, default=1800, dest="license_timeout",
                    help="授权暂停最多等多少秒（默认 1800=30 分钟）")
+    h.add_argument("--pid", type=int, default=None,
+                   help="attach 到已在运行的 yjks（8.x 会 initConfig 定向到该 Pid；不杀不启动）")
+    h.add_argument("--invisible", action="store_true",
+                   help="8.x：initConfig(Invisible=True) 静默计算（需 8.x DLL 支持）")
 
     s = sub.add_parser("send", help="把命令追加到收件箱")
     s.add_argument("cmd")

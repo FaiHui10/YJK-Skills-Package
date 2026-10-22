@@ -193,6 +193,11 @@ def main(argv=None):
             try:
                 cli = Y.Client()
                 print("  客户端就绪：%s（%s）" % (cli.dll, cli.kind))
+                if getattr(cli, "has_init_config", False):
+                    print("  8.x 能力：%s" % cli.capabilities())
+                    ver = Y.P.version_xyz(Y.rt_yjk().get("version")) or "8.0.0"
+                    print("    initConfig(Version=%s, Pid=%s) -> %s"
+                          % (ver, pid, cli.configure(ver, pid=pid)))
                 print("  UINew 建临时工程 ...")
                 print("    -> %s" % cli.run("UINew", os.path.join(tmp, "Probe.yjk"), 200))
                 t0 = time.time()
