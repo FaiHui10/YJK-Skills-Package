@@ -261,17 +261,17 @@ yjk_importydb <新截面.ydb>            ← 其它技能产出的新模型库�
 & $py -X utf8 -B "$D\jc_react.py" --dir "<工程目录>" --kp <单桩竖向刚度>
 ```
 
-- 链条：`SetCurrentLabel JCCAD_RESULT` → `BaseDraw_GenData_script` → `BaseDraw_BaseAnalysis`（8.1 实测：切标签 11.5~31 s，生成数据 4~11 s，计算 4~6 s）。
-- **装哪个版本要自己点**：`paths.find_yjk_install()` 可能命中 `YJK_DIR` 指的 7.x（本机就是 7.1），
+- 链条：`SetCurrentLabel JCCAD_RESULT` → `BaseDraw_GenData_script` → `BaseDraw_BaseAnalysis`（耗时随机器和模型规模变化，按实测 ×2~3 设超时）。
+- **装哪个版本要自己点**：`paths.find_yjk_install()` 可能命中 `YJK_DIR` 指的 7.x，
   而基础链只在 8.1 上验过 → 用 `--root "<8.x 安装目录>"`；版本 <8 时脚本**直接拒绝**（要试加 `--force`）。
 - 判据三条齐看：`计算分析.log` 末行「计算正常，未发现问题」（**GBK**）+ `jccad.result`/`CAL_MID.DIS` 的 mtime 晚于本轮开始 + `CAL_MID.DIS` 字节结构对得上。
-- **8.1 实测：带文档启动后 IPC 可用**（`SetCurrentLabel` 真执行 11.5 s）。硬性约束 1 说的"带文档启动失效"针对**建模命令**，不要据此推断基础命令也失效；判据永远是"耗时 + 文件 mtime"。
+- **8.1 实测：带文档启动后 IPC 可用**。硬性约束 1 说的"带文档启动失效"针对**建模命令**，不要据此推断基础命令也失效；判据永远是"耗时 + 文件 mtime"。
 - 逐桩反力：`Jccad_1.ydb` 的 `PileForce` 是**空表**，`Jccad_Result_New.ydb` 不一定生成，所以从 `CAL_MID.INP/.DIS` 反算：`R = −Kp × Σ(四节点形函数×UZ)`。`Kp` 是单桩竖向刚度，**只能从基础计算书取**——用"Σ弹簧反力 = Σ桩反力"反推会偏大（弹簧里同时含筏板底土弹簧）。
 - 改 `Jccad_0.ydb` 的 `app_Pile`（`DaisFlag=-1` = 板下桩）之前**先关掉打开该工程的 YJK**，否则写入会被内存副本覆盖。
 - **基础模块的备份/图形文件会把旧模型恢复回来（已验证，最坑）**：`基础备份\`、`<工程名>_F.yjc`、`.tmp`、`.yg`、`.ygt`、`.ygjcbak`、`Jccad_0_ydb.dat` 都是它的模型与恢复源。
-  只改 `app_Pile` 后，用户一进基础模块并保存，就会把 `Jccad_0.ydb` 写回旧桩，**并把桩顶 `z` 写成 0**（实测两次：54 桩被写回 279/56、z 全 0）。
+  只改 `app_Pile` 后，用户一进基础模块并保存，就会把 `Jccad_0.ydb` 写回旧桩，**并把桩顶 `z` 写成 0**（实测会出现桩数被写回旧值、z 被写成 0）。
   可靠做法是把这些文件**整体移出工程目录**（不是改名留在原地），再重开工程：实测移出后界面显示与 ydb 一致。现成脚本 `pile-layout-opt\scripts\prep_model.py --dir <工程目录>`。
-- 移出后若用户又打开并保存了基础模块，`z` 会被 GUI 统一重算（实测 54 桩全部变 −13700）；要保留原桩顶标高就在保存后重算复核。
+- 移出后若用户又打开并保存了基础模块，`z` 会被 GUI 统一重算（实测 z 会被统一重算）；要保留原桩顶标高就在保存后重算复核。
 - `.yjc` 可以缺席：工程没有 `_F.yjc` 时照样能打开，`--gen-only` / `--output` 也照常跑通，且**不会重建它** → 它是 GUI 侧数据，不是驱动链的输入。
 - `--gen-only` 结束时会重写 `Jccad_0.ydb`：桩数/桩位应保持不变；若变了，就是上一条那几个 GUI 文件把旧模型带回来了。
 - **不清旧结果会直接复用**：改桩后必须删 `基础计算及结果输出\jccad.result`、`jccad.ydb` 与旧 `*.out`，否则"改了没反应"。
