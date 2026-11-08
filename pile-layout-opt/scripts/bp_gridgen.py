@@ -1,16 +1,17 @@
 # -*- coding: utf-8 -*-
 """按给定 x/y 间距生成规则网格桩位（z：西列与南行沿用 -10000，其余 -13700）。
 
-用法: python bp_gridgen.py --tag L2 --xg 3.5,3.1,2.9,2.75,2.7,2.5 --yg ... --mg 1.0
+用法: python bp_gridgen.py --prj <工程目录> --work <输出目录> --tag L2 --xg 3.5,3.1,2.9,2.75,2.7,2.5 --yg ... --mg 1.0
 """
 import argparse, os, sqlite3
 import numpy as np
 
-PRJ = r"G:\Projects\新会银海枢纽广场\05模型及计算\方案\T1h700b-BP"
-WORK = r"G:\Projects\新会银海枢纽广场\05模型及计算\方案\_work\yjktest"
+# 工程目录 / 输出目录由 --prj / --work 传入
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--tag", required=True)
+ap.add_argument("--prj", required=True, help="工程目录（含 Jccad_0.ydb）")
+ap.add_argument("--work", required=True, help="布局输出目录")
 ap.add_argument("--xg", required=True, help="西→东 7 个间距(m)")
 ap.add_argument("--yg", required=True, help="北→南 6 个间距(m)")
 ap.add_argument("--mgw", type=float, default=1.0)
@@ -18,6 +19,8 @@ ap.add_argument("--mgs", type=float, default=1.0)
 ap.add_argument("--mge", type=float, default=None)
 ap.add_argument("--mgn", type=float, default=None)
 a = ap.parse_args()
+PRJ = a.prj
+WORK = a.work
 
 con = sqlite3.connect(os.path.join(PRJ, "Jccad_0.ydb"))
 rect = con.execute("select ptx, pty from RaftCornerPoint").fetchall()

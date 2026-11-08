@@ -2,7 +2,9 @@
 """稳健解析 YJK-F桩承载力验算.out：逐桩各组合 Nk，输出 8x7 网格。"""
 import re, sqlite3, os, sys
 
-base = sys.argv[1] if len(sys.argv) > 1 else r"G:\Projects\新会银海枢纽广场\05模型及计算\方案\T1h700b-BP"
+if len(sys.argv) < 2:
+    sys.exit("usage: bp_grid.py <工程目录>")
+base = sys.argv[1]
 out = os.path.join(base, "基础计算及结果输出", "YJK-F桩承载力验算.out")
 L = open(out, encoding="gbk", errors="replace").read().splitlines()
 

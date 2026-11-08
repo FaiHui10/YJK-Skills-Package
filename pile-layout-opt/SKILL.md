@@ -28,7 +28,7 @@ description: 筏板下桩位变距优化与抗浮桩 F2 控制优化。读 Jccad
 ## 标准作业（一条命令）
 
 ```powershell
-& $PY -X utf8 "$S\run_layout.py" --dir "G:\...\T1h700b-BP" --layout "N54\layout.csv" --root "E:\YJKS\YJKS_8_1_0"
+& $PY -X utf8 "$S\run_layout.py" --dir "G:\...\T1h700b-BP" --layout "N54\layout.csv" --root "<YJK安装目录>"
 ```
 
 按 `kill YJK → 移出恢复源 → 写入布局 → YJK 重算 → 核验` 五步串行执行，任一步失败即停。
@@ -58,7 +58,7 @@ $PY = "$env:USERPROFILE\.yjk-auto\venv\Scripts\python.exe"
 $S  = "<skills>\pile-layout-opt\scripts"
 
 & $PY -X utf8 "$S\bp_grid.py"    "G:\...\T1h700b-BP"
-& $PY -X utf8 "$S\bp_gridgen.py" --tag L5 --xg 3.45,3.35,3.35,3.20,3.00,2.80,2.70 --yg 3.15,3.10,3.00,2.90,2.75,2.60 --mgw 0.95 --mgs 0.95 --mge 0.95 --mgn 0.95
+& $PY -X utf8 "$S\bp_gridgen.py" --prj "G:\...\T1h700b-BP" --work "G:\...\_work" --tag L5 --xg 3.45,3.35,3.35,3.20,3.00,2.80,2.70 --yg 3.15,3.10,3.00,2.90,2.75,2.60 --mgw 0.95 --mgs 0.95 --mge 0.95 --mgn 0.95
 & $PY -X utf8 "$S\bp_optim.py"   --src "G:\...\T1h700b-BP" --n 54 --cols 8 --tag N54 --min 2500 --edge 900
 & $PY -X utf8 "$S\bp_dens.py"    "G:\...\T1h700b-BP"                      # 从结果导出强度场 x,y,dens
 & $PY -X utf8 "$S\run_layout.py" --dir "G:\...\T1h700b-BP" --layout "N54\layout.csv" --root "<YJK安装目录>"   # 五步全自动
@@ -73,9 +73,9 @@ $S  = "<skills>\pile-layout-opt\scripts"
 
 1. **YJK 开着时写 ydb 会被内存副本覆盖**。必须先 `yjk_auto.py kill`，或确认无 `yjks.exe`。
 2. **YJK 会用自己的备份/图形数据把旧桩恢复回来（本技能最坑的一条）**：`基础备份\`、`<工程名>_F.yjc/.tmp/.yg/.ygt/.ygjcbak`、`Jccad_0_ydb.dat` 都是基础模块的模型与恢复源。
-   只改 `app_Pile` 不够——用户一进基础模块并保存，`app_Pile` 就被写回旧桩，**且 `z` 被写成 0**（实测：54 桩方案被写回 279/56、z 全 0，两次复现）。
-   可靠做法：`scripts\prep_model.py --dir <工程目录>` 把这些文件整体移出工程（不要只改名留在原地），再写入新桩、重算。**本工程按此处理后，界面显示与 ydb 一致**。
-3. **改完最好让 GUI 再保存一次**：GUI 保存会把 `z` 统一重算（实测 54 桩全部变为 −13700），如需保留原桩顶标高，保存后立即 `check_layout.py` 复核 `z 分布` 并重算。
+   只改 `app_Pile` 不够——用户一进基础模块并保存，`app_Pile` 就被写回旧桩，**且 `z` 被写成 0**（实测会出现桩数被写回旧值、z 被写成 0）。
+   可靠做法：`scripts\prep_model.py --dir <工程目录>` 把这些文件整体移出工程（不要只改名留在原地），再写入新桩、重算。按此处理后，界面显示与 ydb 一致。
+3. **改完最好让 GUI 再保存一次**：GUI 保存会把 `z` 统一重算（实测 z 会被统一重算），如需保留原桩顶标高，保存后立即 `check_layout.py` 复核 `z 分布` 并重算。
 4. **结果缓存必须全清，只删 `.out` 不够**：`基础计算及结果输出\` 里的 `jccad.result`、`jccad.ydb`、`Jccad_1.ydb`、`jccad.pre`、`element.data`、`中间数据\` 都会让 YJK 复用**上一版模型的网格与反力**。
    实测：126 桩改 116 桩时只删 `.out`，重算出的峰值 4743（假超限）；把这 6 项一起清掉后同一布局为 3044，判定通过。`apply_layout.py` 现已代做。
 5. **GenData 会重写 ydb**：`jc.py --gen-only` 结束时会重写 `Jccad_0.ydb`，桩数应保持不变——若变了，说明有陷阱 2 的文件在起作用。

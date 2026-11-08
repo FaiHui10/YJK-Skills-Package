@@ -170,6 +170,108 @@ cli.run("<命令名>", "<参数>")      # 无参命令传空串 ""
 
 ---
 
+## 6. 基础（JCCAD）模块（8.1 实测）
+
+**这一节的命令名不在官方《命令说明文档》里**，是从 `<YJK安装目录>\YJK.CUI` 反查出来的（方法见本节末）。
+
+### 6.1 启动方式：必须带着工程启动
+
+基础模块**不存在**"UINew 建空工程再导入"这条路 —— 基础库 `Jccad_0.ydb` 是随工程一起打开的。
+正确做法是命令行带文档启动，再用 `initConfig` 把 IPC 定向到这个 pid：
+
+```python
+subprocess.Popen([exe, "-product", "YJKS", "-open", "<工程>.yjk"], creationflags=0x208)
+# 等窗口标题里出现工程名后：
+cli.configure("8.1.0", invisible=False, pid=pid)     # ControlConfig{Pid=...}
+```
+
+实测（8.1）：**带文档启动后 IPC 可用** —— `SetCurrentLabel` 实测 11.5 s / 31.4 s 两次都真执行，
+命令表里不存在的名字仍是 `0.0s` 秒回、零文件变化。
+（`## 0. 工程界面` 里"`UIOpen` 忽略路径 → 之后所有命令退化成 0.0 s 秒回"说的是**建模命令**，
+不要拿它推断基础命令也失效；判据永远是"耗时 + 文件 mtime"，不是命令返回文字。）
+
+**注意安装目录**：`paths.find_yjk_install()` 先认环境变量 `YJK_DIR`，它可能指着 6/7（本机就指着 7.1）；
+这一节的命令名是从 **8.1 的 `YJK.CUI`** 挖出来的，`initConfig` 也只有 8.x 的 `YJKAPI.dll` 才有 ——
+所以跑之前用 `jc.py --root "<8.x 安装目录>"` 明确指定，别拿 7.x 去试。
+
+### 6.2 命令表
+
+| 命令 | 含义 | 参数 | 实测耗时 |
+|---|---|---|---|
+| `SetCurrentLabel` | 切到「基础计算及结果输出」 | `JCCAD_RESULT` | 11.5 / 31.4 s（必须等它切完） |
+| `BaseDraw_GenData_script` | **生成基础计算数据** | 无 | 4~11 s |
+| `BaseDraw_BaseAnalysis` | **基础计算、分析** | 无 | 4~6 s |
+| `BaseDraw_OutputResult_script` | 计算结果输出（重写 `jccad.result`） | 无 | 未单独测 |
+| `BaseDraw_BaseCalOption` | 设置基础计算参数 | 未实测（建议界面上设好再跑） | — |
+| `BaseDraw_DrawBaseModel` | 显示基础计算简图 | 无 | — |
+| `BaseDraw_DrawBaseSettle` | 显示沉降计算结果 | 无 | — |
+| `BaseDraw_BaseReadData` | 直接读入上次计算结果 | 无 | — |
+| `BaseDraw_VTK` | VTK 显示有限元结果 | 无 | — |
+| `jccad_clear_tempobj` | 清理桩计算结果文字 | 无 | — |
+
+同族还有（`yjkBaseDraw.dll` 注册，未逐个实测）：`BaseDraw_SetMethod_script`（计算方法）、
+`BaseDraw_SetMeshSize_script`（网格尺寸）、`BaseDraw_SetUpStiff_script`（上部刚度）、`BaseDraw_PJRg`。
+
+### 6.3 重算链
+
+```python
+JC_CHAIN = [
+    ("SetCurrentLabel", "JCCAD_RESULT"),        # 11.5s，不切到位后面全白跑
+    ("BaseDraw_GenData_script", ""),            # 生成数据：改过桩/筏板后必跑
+    ("BaseDraw_BaseAnalysis", ""),              # 基础计算、分析
+]
+# 需要重新输出图形/结果时再加：("BaseDraw_OutputResult_script", "")
+```
+
+改桩位后**只跑 `BaseDraw_BaseAnalysis` 是不够的** —— 它算的是 `GenData` 生成的那份数据；
+少跑 `BaseDraw_GenData_script` 会得到"计算成功但结果还是旧的"（`计算分析.log` 照样写"计算正常"）。
+
+### 6.4 成功判据（缺一条都别当结果有效）
+
+1. `基础计算及结果输出\计算分析.log` 末行含 **「计算正常，未发现问题」**（**GBK**，UTF-8 读会静默读出空串）；
+2. `基础计算及结果输出\jccad.result` 与 `...\YjkCAL_MID\CAL_MID.DIS` 的 **mtime 晚于本轮开始**；
+3. `CAL_MID.DIS` 大小 = `24 + n工况×(8×N+12) − 12`，其中 `N = 3×(最大节点号 + 16)`
+   （**最后一工况没有尾随 12 字节**；实测 696 节点 / 14 工况 = 239412 B）。
+
+> 只等 `RunCmd` 返回是不够的：失败也会写文件。要按上面三条一起判，并且等文件 **mtime 稳定**再判。
+
+### 6.5 反查命令名（`YJK.CUI` 才是权威注册表）
+
+官方文档没列的命令，去安装目录的 `YJK.CUI` 里按 UID 挖 `<Command>`：
+
+```powershell
+Select-String -Path "<YJK安装目录>\YJK.CUI" -Pattern 'ID_BaseDraw_' -Context 0,3
+# 结构是：<MenuMacro UID="ID_BaseDraw_BaseAnalysis"><HelpString>基础计算、分析</HelpString><Command>BaseDraw_BaseAnalysis</Command>
+```
+
+拿到候选名后**必须实测**：有效命令耗时 ≥0.3 s 且改文件；`0.0s` 秒回 = 名字无效（别以为是语法问题）。
+
+### 6.6 改基础库（`Jccad_0.ydb`）之前
+
+- **先关掉打开该工程的 YJK**：库是 SQLite，YJK 打开态下写会被内存里的副本覆盖回去；
+- 表 `app_Pile` 列 `ID,x,y,z,kind,DaisFlag,idaispilelen`，`DaisFlag=-1` = **板下筏板桩**、`0` = 承台桩；
+- `kind` 是 `DEF_Pile` 的 **0 起索引**（`kind=1` → `DEF_Pile.ID=2`，`F1` 就是该桩型的**单桩竖向承载力特征值** kN）；
+- 删桩按坐标匹配（±1 mm）+ 断言匹配行数，不要按行序删。
+
+### 6.7 算完的桩反力在哪
+
+`基础计算及结果输出\Jccad_1.ydb` 的 `PileForce`（`ID,zuhe,PileR`）在 8.1 里**是空表**，
+`jccad.result` 是二进制打包格式，`Jccad_Result_New.ydb` 在本项目根本没生成。
+要逐桩反力只能从有限元原始件反算 —— 用 **`scripts/jc_react.py`**：
+
+```powershell
+python scripts\jc_react.py --dir "<工程目录>" --kp 271571            # 利用率按 DEF_Pile.F1 取 Ra
+python scripts\jc_react.py --dir "<工程目录>" --kp <刚度> --rak 3600  # 指定承载力
+```
+
+- 输入：`CAL_MID.INP`（节点/PLATE 单元/`T=0` 竖向弹簧）+ `CAL_MID.DIS`（各工况位移，单位 m）；
+- 单桩反力 `R = −Kp × Σ(四节点形函数 × UZ)`，`Kp` 是**单桩竖向刚度**，只能从基础计算书里取；
+- **不要用"Σ弹簧反力 = Σ桩反力"去反推 Kp**：弹簧里同时含筏板底土弹簧与桩，标定会偏大
+  （本项目实测得 356.9e3，实际 271.6e3，利用率会整体虚低）；
+- 本项目校核值（110 根板下桩 / `F1=3600`）：平均 80.4%、最大 88.8%、最小 71.8%、最大抗拔 1176 kN、Σ弹簧反力 415271 kN。
+
+---
+
 ## 本技能实际使用的链条
 
 **预处理（`--prep`）** —— 导入 ydb 后先跑，把模型"收拾干净"：
@@ -199,6 +301,10 @@ CALC_CHAIN = [
 
 跑完检查 `<工作目录>\设计结果\` 里的文件（30 层框筒约 70 个）。
 **判断"算完没有"优先看 `_yjk_outbox.txt` 的回执**（命令级、带时间戳，还能区分成功与失败），不要只看 `RunCmd` 返回值；用 `wmass.out` 的 mtime 轮询也可以，但每轮都要过冲几秒，而且分不清"算完了"和"算失败了"（失败也写文件）。
+
+**基础（JCCAD）不在上面这条链里**：它必须带 `.yjk` 启动（不能 `UINew` 建空工程），链条是
+`SetCurrentLabel(JCCAD_RESULT) → BaseDraw_GenData_script → BaseDraw_BaseAnalysis`，
+现成实现是 `scripts/jc.py`，见「6. 基础（JCCAD）模块」。
 
 ---
 

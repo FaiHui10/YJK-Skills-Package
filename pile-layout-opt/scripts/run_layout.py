@@ -2,7 +2,7 @@
 """布桩优化一键固化流程：kill → 移出恢复源 → 写入布局 → YJK 重算 → 核验。
 
 用法：
-  python run_layout.py --dir <工程目录> --layout layout.csv --root E:\\YJKS\\YJKS_8_1_0
+  python run_layout.py --dir <工程目录> --layout layout.csv --root <YJK安装目录>
 
 必须用 YJK 驱动用的解释器：%USERPROFILE%\\.yjk-auto\\venv\\Scripts\\python.exe
 任一步失败即停止，不会带着半成品继续往下跑。
@@ -10,12 +10,14 @@
 import argparse, os, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-YJK = os.environ.get("YJK_SKILL_DIR", r"c:\Users\Administrator\.trae-cn\skills\yjk-auto-drive\scripts")
+YJK = os.environ.get("YJK_SKILL_DIR")
+if not YJK:
+    sys.exit("set YJK_SKILL_DIR to the yjk-auto-drive/scripts directory")
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--dir", required=True)
 ap.add_argument("--layout", required=True, help="layout.csv（表头 x,y,z，单位 mm）")
-ap.add_argument("--root", required=True, help="YJK 8.x 安装目录，如 E:\\YJKS\\YJKS_8_1_0")
+ap.add_argument("--root", required=True, help="YJK 8.x 安装目录，如 <YJK安装目录>")
 ap.add_argument("--ra", type=float, default=None)
 ap.add_argument("--min", dest="d_min", type=float, default=2500.0)
 ap.add_argument("--skip-calc", action="store_true")
