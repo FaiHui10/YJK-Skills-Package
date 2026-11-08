@@ -25,6 +25,7 @@
 | `floor-system-comparison` | **楼盖**（次梁布置方式）经济比选 | 业务 |
 | `column-scheme-comparison` | 柱**截面形式**（钢筋混凝土 vs 钢管混凝土）经济比选 | 业务 |
 | `yjk-draw-takeoff` | **算完之后**：施工图出图 + 混凝土/钢筋工程量 + 汇总 Excel | 业务 |
+| `pile-layout-opt` | 筏板/抗浮布桩优化：变距、减桩、峰值 BESO、1750mm 间距审计 | 业务 |
 | `yjk-dev-refs/` | （**不是技能**）YJK 官方**二次开发资料**的离线参考集 | 资料 |
 
 `yjk-dev-refs/` 由 gitee 上 YJK 官方开源组织 `yjk-opensource` 的 `csharp-yjks` / `py-yjks` /
@@ -35,7 +36,7 @@
 
 ---
 
-## 二、结构：一个底座 + 四个业务技能
+## 二、结构：一个底座 + 五个业务技能
 
 ```
                     ┌──────────────────────────────┐

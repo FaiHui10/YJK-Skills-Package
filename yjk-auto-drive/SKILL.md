@@ -54,7 +54,7 @@ kill 全部 yjks → 确保 YjkLauncher 在跑 → yjks.exe 无参启动
 `stair_arrange`）、梁加腋（`BeamJYSect_Def` / `beamjy_arrange`）、板加腋
 （`SlabJYSect_Def` / `slabjy_arrange`）、蒙皮（`SkinCreateInfo` / `skin_arrange` /
 `skinLoad_arrange`）、层间板（`MidSlabCreateInfo`）、柱帽（`ColCapSect_Def`）、
-基础建模与设计结果（JCCAD）、智能辅助设计模型映射（`Hi_ModelMapping`）、联动回写
+基础建模与设计结果（JCCAD，见下面「基础（JCCAD）模块」一节）、智能辅助设计模型映射（`Hi_ModelMapping`）、联动回写
 （`Hi_AddToAndReadYjk` / `ReflecToYJK` / `RefreshToYJK` / `ReflectAndCreateYDB`）、
 有限元时程后处理（`Hi_API_YJKDTReport`）。
 
@@ -249,6 +249,46 @@ yjk_importydb <新截面.ydb>            ← 其它技能产出的新模型库�
 
 > **别按旧文档把超时设成 10 分钟**：一轮就一分多钟，超时给太大只会让"弹了模态框/卡住"晚 10 分钟才发现。**按「你自己的实测 × 2~3」设** —— 上面这个样本一轮给 **150 s** 就够。判断是否真算完，优先看 `_yjk_outbox.txt` 的回执（命令级、带时间戳），比用 `设计结果\wmass.out` 的 mtime 轮询更准：mtime 轮询每轮都要过冲几秒，还分不清"算完了"和"算失败了"（失败也会写文件）。量级随机器与模型规模变化，**以你的实测为准**。
 
+## 基础（JCCAD）模块：`jc.py` / `jc_react.py`
+
+基础（筏板/承台/桩）**不能**走 `host` 那条链 —— `UINew` 建空工程 + 导入 ydb 建不出基础模型。
+基础库 `Jccad_0.ydb` 跟着工程一起打开，所以必须**带着 `.yjk` 启动**，再 `initConfig(Pid)` 把 IPC 定向过去：
+
+```powershell
+& $py -X utf8 -B "$D\jc.py" --dir "<工程目录>"             # 生成数据 + 基础计算 + 判结果
+& $py -X utf8 -B "$D\jc.py" --dir "<工程目录>" --gen-only   # 改了桩/筏板后只生成数据
+& $py -X utf8 -B "$D\jc.py" --dir "<工程目录>" --pid <PID>  # 接管已打开该工程的实例（不启动、不杀）
+& $py -X utf8 -B "$D\jc_react.py" --dir "<工程目录>" --kp <单桩竖向刚度>
+```
+
+- 链条：`SetCurrentLabel JCCAD_RESULT` → `BaseDraw_GenData_script` → `BaseDraw_BaseAnalysis`（8.1 实测：切标签 11.5~31 s，生成数据 4~11 s，计算 4~6 s）。
+- **装哪个版本要自己点**：`paths.find_yjk_install()` 可能命中 `YJK_DIR` 指的 7.x（本机就是 7.1），
+  而基础链只在 8.1 上验过 → 用 `--root "<8.x 安装目录>"`；版本 <8 时脚本**直接拒绝**（要试加 `--force`）。
+- 判据三条齐看：`计算分析.log` 末行「计算正常，未发现问题」（**GBK**）+ `jccad.result`/`CAL_MID.DIS` 的 mtime 晚于本轮开始 + `CAL_MID.DIS` 字节结构对得上。
+- **8.1 实测：带文档启动后 IPC 可用**（`SetCurrentLabel` 真执行 11.5 s）。硬性约束 1 说的"带文档启动失效"针对**建模命令**，不要据此推断基础命令也失效；判据永远是"耗时 + 文件 mtime"。
+- 逐桩反力：`Jccad_1.ydb` 的 `PileForce` 是**空表**，`Jccad_Result_New.ydb` 不一定生成，所以从 `CAL_MID.INP/.DIS` 反算：`R = −Kp × Σ(四节点形函数×UZ)`。`Kp` 是单桩竖向刚度，**只能从基础计算书取**——用"Σ弹簧反力 = Σ桩反力"反推会偏大（弹簧里同时含筏板底土弹簧）。
+- 改 `Jccad_0.ydb` 的 `app_Pile`（`DaisFlag=-1` = 板下桩）之前**先关掉打开该工程的 YJK**，否则写入会被内存副本覆盖。
+- **基础模块的备份/图形文件会把旧模型恢复回来（已验证，最坑）**：`基础备份\`、`<工程名>_F.yjc`、`.tmp`、`.yg`、`.ygt`、`.ygjcbak`、`Jccad_0_ydb.dat` 都是它的模型与恢复源。
+  只改 `app_Pile` 后，用户一进基础模块并保存，就会把 `Jccad_0.ydb` 写回旧桩，**并把桩顶 `z` 写成 0**（实测两次：54 桩被写回 279/56、z 全 0）。
+  可靠做法是把这些文件**整体移出工程目录**（不是改名留在原地），再重开工程：实测移出后界面显示与 ydb 一致。现成脚本 `pile-layout-opt\scripts\prep_model.py --dir <工程目录>`。
+- 移出后若用户又打开并保存了基础模块，`z` 会被 GUI 统一重算（实测 54 桩全部变 −13700）；要保留原桩顶标高就在保存后重算复核。
+- `.yjc` 可以缺席：工程没有 `_F.yjc` 时照样能打开，`--gen-only` / `--output` 也照常跑通，且**不会重建它** → 它是 GUI 侧数据，不是驱动链的输入。
+- `--gen-only` 结束时会重写 `Jccad_0.ydb`：桩数/桩位应保持不变；若变了，就是上一条那几个 GUI 文件把旧模型带回来了。
+- **不清旧结果会直接复用**：改桩后必须删 `基础计算及结果输出\jccad.result`、`jccad.ydb` 与旧 `*.out`，否则"改了没反应"。
+- 逐桩反力更省事的来源是 `基础计算及结果输出\YJK-F桩承载力验算.out`：按 `ZH-n` 分块解析 `组合号 Nk Ra`，`ZH-n` 与 `app_Pile order by ID` 一一对应。
+  解析要在章节标题（`一、`/`二、`/`三、`）处截断，否则后续表格的数字会串进来，峰值判错。
+- 布桩优化（变距/减桩/复核）交给 `pile-layout-opt` 技能，本技能只负责驱动通道。
+
+### 基础模块 8.1 二次开发 API（`JcDataFunc`）
+
+- **8.1 SDK 不在 PyPI 包里**：PyPI 的 `YJKAPI` 包可能对应旧版 DLL，写出的 ydb 在 8.1 里导入后可能空跑；要用 Gitee `yjk-opensource/yjkapi_-python` 对应版本分支的 `SDK` 包（解压出 `python310` + `YJKAPI`）。运行时把 `<YJK安装目录>` 加入 `PATH`，工作目录用纯 ASCII 路径。
+- **`JcDais_App` 只加不删**：在同一柱位新增承台时，`app_dais.Remove(old)` 可能不生效，导致同一柱位出现两座承台。改承台优先只改原承台的 `kind`/`dBotElevat`/`idaispilelen`；改完必须核对 `app_dais` 总数与 `group by nj having count(*)>1`。
+- **`jccad_read_by_ydb` 只导模型、不保组合**：导入后 `LoadZhuHe` 会减少、恒载可能被清零；如发现组合缺失，先从 API ydb 回填 `Loads`/`LoadZhuHe`/`CalPara`，再跑 `jc.py`（不要再 import）。
+- **标高体系要统一核对**：筏板顶/底、承台顶/底（底 = 顶 - 台阶高之和）、承台桩长（按统一桩端反算）、板下桩顶/桩长要能对上；不要把不同基准的 `z` 混用。
+- 细节、SQL、脚本与验收顺序见 `references/foundation-jccad-8.1-api.md`。
+
+命令全表、耗时、`YJK.CUI` 反查法与 `CAL_MID.DIS` 格式见 `references\commands.md` §6。
+
 ## 总信息（前处理计算参数）—— 最容易静默失真的一环
 
 **YJK 新建空工程的默认总信息是**：
@@ -339,7 +379,7 @@ yjk_auto.py send   --dir "<工作目录>" "@calc"   # 编排看：未就绪时�
 
 | # | 约束                             | 原因                                                                                                                                                                                                       |
 | - | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1 | **yjks 必须无参启动**                | 带 `.yjk` 或 `-open <路径>` 启动时，**工程其实并没打开**（窗口标题只到目录级、不含工程名），所有建模命令退化成 `0.1s` 秒回且不写盘；但 **IPC 事件照样会建立**（约 35s，比无参启动的 12~16s 慢）——所以"事件在不在"不能当判据。`Flag=True` 只在无文档启动时生效。详见 `references/troubleshooting.md` §11 |
+| 1 | **yjks 必须无参启动**（**基础 JCCAD 是例外**：必须 `-open <工程>.yjk` 带文档启动，见「基础（JCCAD）模块」） | 建模：带 `.yjk` 或 `-open <路径>` 启动时，**工程其实并没打开**（窗口标题只到目录级、不含工程名），所有建模命令退化成 `0.1s` 秒回且不写盘；但 **IPC 事件照样会建立**（约 35s，比无参启动的 12~16s 慢）——所以"事件在不在"不能当判据。`Flag=True` 只在无文档启动时生效。详见 `references/troubleshooting.md` §11 |
 | 2 | **yjks 不会随宿主退出而回收，必须显式清**      | `host` 进程退出后 yjks 仍存活（`DETACHED` + `CREATE_BREAKAWAY` 也留得住）。故 `host` 开工先清、收尾在 `finally` 里再清。需要连续下命令时用常驻 `host --inbox`（免得反复重启，每次 12s + 启动开销）                                                               |
 | 3 | **全机只能有 1 个 yjks.exe；且只动自有那个** | 多实例抢 `Global\ShareMemoryEvent` / `Global\WaitResaultEvent` → 症状是"有 Success 应答但命令不执行"。命令**不能按 PID 定向**，所以只能靠"独占"：见上面「实例隔离」——只清 `own.json` 里那个，发现你在用的实例就拒绝/停手，**绝不去关你的**                                   |
 | 4 | **成功判据只认客观证据**                 | 文件 mtime / 窗口标题 / CPU 增量。`RunCmd` 正常返回 + Success 应答在多实例下照样出现，不能作依据。**"两个 IPC 事件存在"同样不算证据**——带文档启动的实例也会建事件（约束 1），却根本不执行命令                                                                                 |
@@ -541,6 +581,8 @@ yjk-auto-drive/
     ├── yjk_auto.py           # 主驱动：status/kill/probe/host/send（含 @takeoff 算量宏）
     ├── impcheck.py           # 导入校验闸门：逐表核对 .ydb→.ymd（只依赖 sqlite3）
     ├── projpara.py           # 总信息（前处理计算参数）按名读写 + 回读校验
+    ├── jc.py                 # 基础（JCCAD）重算：带工程启动 → 切标签 → 生成数据 → 基础计算
+    ├── jc_react.py           # 由 CAL_MID.INP/.DIS 反算逐桩反力与利用率（不依赖 YJK 结果库）
     ├── portability_check.py  # 可移植性回归护栏（扫整套技能）
     ├── dlgwatch.py           # 模态框看门狗（host 内线程，自动应答出错弹框）
     ├── env.py                # 工程目录级探测（模型文件名/版本/是否正被打开）
