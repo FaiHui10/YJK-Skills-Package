@@ -1,151 +1,165 @@
-# 基础（JCCAD）模块二次开发 API 与承台更新
+# 基础（JCCAD 8.1）自动计算规程
 
-记录 YJK 8.x 基础模块 `JcDataFunc` 通路、承台更新、组合保留、标高核对与结果解析。
-配合 `yjk-auto-drive`（IPC 驱动）与 `pile-layout-opt`（布桩优化）使用。
-文中 `<YJK安装目录>`、`<SDK目录>`、`<工程目录>`、`<工作目录>` 按本机实际路径替换；
-`<工作目录>` 建议用纯 ASCII 路径。
+> 适用：YJK 8.1 基础模块（筏板 / 承台 / 桩），经 `YJKSControl` IPC 驱动。
+> 配套：`scripts/jc.py`（驱动）、`pile-layout-opt/scripts/af_gate.py`（一致性闸门）、
+> `pile-layout-opt/scripts/af_iterate.py`（布桩迭代）。
+> 本文所有数字来自某地下室抗浮工程实测（2,206~2,646 根桩），**量级可参考，数值按工程替换**。
 
-## 1. SDK 选择与安装
+---
 
-PyPI 的 `YJKAPI` 包可能对应旧版 DLL；用它写出的 ydb 在 8.1 里可能“能导入、但
-GenData/BaseAnalysis 空跑”。应使用 Gitee `yjk-opensource/yjkapi_-python`
-**与 YJK 版本对应的分支**里的 `SDK` 包。
+## 1. 先理解状态：一个模型有 4 份，两条回写路径
 
-典型结构（解压后）：
+| 状态 | 文件 | 谁写 |
+|---|---|---|
+| GUI 内存里的基础模型 | （工程内 `CK.yjk`、`<工程名>_F.yjc`） | 开工程时恢复；`jccad_read_by_ydb` 替换 |
+| 基础建模输入库 | `Jccad_0.ydb` | 「生成数据」**从 GUI 回写**；导入也可能回写 |
+| 计算用输入库 | `基础计算及结果输出\Jccad_0.ydb` | 「生成数据」写 |
+| 计算结果 | `jccad.result` / `jccad.ydb` / `中间数据\*` | 「基础计算、分析」写，**不带模型版本标记** |
+
+三条实测结论（决定了后面所有流程）：
+
+1. **「生成数据」不读磁盘上的 `Jccad_0.ydb`**，它算的是 GUI 里那份模型。GUI 那份可能是上次留下的旧桩位、零荷载、8 个默认组合。
+2. **`jccad_read_by_ydb` 只保证模型**（桩位/承台/节点）；导入后 `LoadZhuHe` 可能掉回 8 个、`Loads` 可能清零。
+3. **「生成数据」会把 GUI 状态回写覆盖 `Jccad_0.ydb`**。于是磁盘上的好文件被覆盖，而旧结果还躺在旁边，看起来"有新结果"。
+
+⇒ 所以：**要么走完整导入流程，要么直接点生成数据都不对**；正确顺序见 §2。
+
+## 2. 标准流程（每次重算都照这个来）
 
 ```
-<SDK目录>\python310\python.exe
-<SDK目录>\python310\site-packages\YJKAPI
+0  关 YJK（确认没有 yjks.exe）
+1  准备模型：把要算的版本放到 <工程>\Jccad_0.ydb
+2  移走恢复源：CK_F.yjc/.tmp/.yg/.ygt/.ygjcbak、Jccad_0_ydb.dat（prep_model.py）
+3  删旧结果：jccad.result、jccad.ydb、jccad.pre、element.data、中间数据\、*.out
+4  启动 yjks（带 -open <工程>.yjk）→ initConfig(Pid)
+5  SetCurrentLabel JCCAD_RESULT
+6  jccad_read_by_ydb                       ← 把模型灌进 GUI
+7  把第 1 步的模型文件再覆盖回 Jccad_0.ydb   ← 导入会回写，必须补这一步
+8  BaseDraw_GenData_script
+9  BaseDraw_BaseAnalysis
+10 过闸门（§7）；不过就回第 0 步
 ```
 
-运行前：
+两条容易漏的：
+
+- **第 7 步不能省**：只导入不覆盖，组合/荷载会被导入清掉；只覆盖不导入，桩位不更新。
+- **每轮重新开 YJK**：会话内改 `Jccad_0.ydb` 对「生成数据」无效（模型在打开工程时就进内存了）。实测：同一会话内连改 3 次桩位，结果文件、桩数一字不变；重开会话后立刻生效。
+
+### 2.1 从上部结构开始（荷载必须用上部最新内力）
+
+基础模块的荷载来自上部结构时，**只跑 `BaseDraw_BaseGenData`（接力建模）不会更新荷载**——实测荷载一个数都没变。必须显式执行 **`jccad_read`（重新读取上部数据）**。
+
+```
+上部结构（带 .yjk 启动）
+  SetCurrentLabel IDModule_Element
+  yjk_repair → yjk_save → yjk_formnode(2) → yjk_formslab_alllayer
+  yjk_setlayersupport → yjkspre_genmodrel → yjktransload_tlplan → yjktransload_tlvert
+  SetCurrentLabel IDSPRE_ROOT → yjkdesign_dsncalculating_all → SetCurrentLabel IDDSN_DSP
+  （35 层实测 262 s；判据：设计结果\wmass.out 的 mtime 刷新）
+
+基础
+  SetCurrentLabel JCCAD_RESULT
+  jccad_read              ← 重新读上部内力（漏了就一直用旧荷载）
+  BaseDraw_BaseGenData → BaseDraw_GenData_script → BaseDraw_BaseAnalysis
+```
+
+判据：`jccad_read` 之后 `Loads` 的 Σ`data0` **与** `LoadsLine` 的 Σ`data0` 应发生变化。
+本工程实测：读入后 点荷载 832,399 + 线荷载 225,245 kN，Dead 工况 1,740,552 kN（旧版 1,848,662）。
+
+> `LoadsLine` 的线荷载是上部墙/梁传下来的，**不能只统计 `Loads`** —— 只算点荷载会以为荷载少了一大截。
+
+### 2.2 组合号先验算再使用
+
+同一句"1.0 恒 + 1.0 高水"，本工程对应 **组合 51**（反力恰好 = Dead − 高水浮力 = −324,814 kN，2 根超限）；
+而 **组合 48（标准组合）** 算出来是 −525,529 kN、1,352 根超限，差了一个数量级的使用后果。
+
+→ 用之前做反力校验：`ΣN(组合) ≈ Σ恒 − Σ水`；对不上就是组合号/系数/水位取错，先别拿去优化。
+
+## 3. 荷载与组合（最容易静默丢失的一环）
+
+### 3.1 `Loads` 的行序是铁律
+
+`Loads` 每行 = 一个节点 × 一个工况，字段 `lFlag`（工况 0..5）、`lIndex`（节点序号）、`data0..data9`（各分量，竖向为 `data0`）。
+
+**必须按「节点优先」排列**：同一节点的 6 个工况连号，即 `ID = 节点序号 × 6 + 工况 + 1`。
+
+- 若写成「工况优先」（先排完工况 0 的所有节点，再排工况 1…），JCCAD **只认到约 18%** 的荷载，而且**不报任何错**。实测：1,164,014 kN 只进去 213,329 kN，Dead 工况反力从应有的 1.49 MN 掉到 0.54 MN。
+- 排查口径：`CAL_MID.LoadCases.txt` 里 Dead 工况的**总支反力**应 ≈ 基础自重 + 上部恒载；只剩基础自重就是荷载丢了。
+
+### 3.2 组合
+
+- `LoadZhuHe` 正常应有完整组合集（本工程 52 个）。导入会把它砍到 8 个默认组合。
+- 抗浮控制组合固定为 **`CombType=1, CombID=51`（1.0 恒 + 1.0 高水，非线性）**；对应的 1.35 水组合是 49。
+- 组合号认不准时，用反力校验：`Σ组合反力 ≈ Σ恒载 + Σ水`，对不上就是组合系数/类型取错了。
+
+### 3.3 量级自检（本项目）
+
+| 项 | 数值 |
+|---|---|
+| 上部恒载 Σ`data0`（工况 0） | 1,164,014 kN |
+| 基础自重（Dead 工况只算自重时） | 326,477 kN |
+| Dead 工况总反力（正常） | ≈ 1.49~1.53 MN |
+| 高水位浮力 | ≈ 2.07 MN |
+| 1.0恒+1.0水 净上拔 | ≈ −0.53~−0.57 MN |
+
+## 4. 桩与承台
+
+- 表：`app_Pile`（`DaisFlag=-1` 板下桩；`>=0` 为承台内显式桩），`app_dais`（承台实例），`DEF_dais`/`def_dais`（类型模板），`dais_stepH`（台阶高，mm）。
+- **承台桩有两部分**：`app_Pile` 里的显式行 + 由承台模板（`npile`）生成的桩。做桩距审计时必须用**结果库 `tblPileApp`**（含生成桩），只用 `app_Pile` 会漏掉 60% 以上的承台桩，导致新桩撞桩被静默丢弃。
+- `JcDais_App` 只加不删：同一柱位可能出现两座承台。改动承台后必须核对 `app_dais` 总数与 `group by nj having count(*)>1`。
+- 标高：`dBotElevat` 为 m，`dais_stepH.H` 为 mm，`app_Pile.z` 为 mm；桩长按统一桩端反算（本项目桩端 −24.50，板下 z=−12.60、长 11.90）。
+
+## 5. 桩刚度（分桩型）
+
+手册（YJK-F 用户手册 §7.5 桩刚度 / §5 参数设置）给的做法：
+
+1. 筏板计算参数 →「基床系数和桩刚度」= **直接取默认值**（另两个选项是"按地质资料反算""按桩基规范附录 C"）。
+2. 命令 **「桩刚度」**（`BaseDraw_DrawPileK`）→ 添加表项 → **修改桩刚度**里**按桩定义**改抗压/抗拉/抗弯 → 布置 → 窗选。
+3. **抗拔刚度 = 抗拔承载力 / 0.01 m = 100 × F2**（D500 F2=400 → 40,000 kN/m；D1200 F2=2,200 → 220,000 kN/m）。
+4. "交互指定过的桩刚度重新生成数据会保留指定值"；要清掉用【恢复默认】。抗压=抗拔时不做非线性迭代。
+
+**实测坑**：直接改库里的 `app_Pile.fKn` / `fALFQ` / `fKm`（或把 `NIK` 置 −1）再导入重算，结果**一个数都不变** —— 这几个字段不是「桩刚度」命令的落库位置。只有 GUI 里点过「桩刚度」的那份工程状态才生效。没有 GUI 条件时，退而用全局 `CalPara.fPILEK`（取占多数的 D500 值，D1200 偏柔、对上拔偏安全）。
+
+## 6. 读结果
+
+- **逐桩反力**：`基础计算及结果输出\jccad.ydb` → `tblPileNL(PileID, CombID, CombType, N)`，`N` 是 9 个 float 的 blob，**第 1 个即轴力**（负=上拔）。
+- 桩属性：`tblPileApp(ID, nRaft_CT, kind, xx, yy, len)`，`nRaft_CT=0` 为板下桩；`tblPileDef` 给 `F1/F2`。
+- 结果桩号与 `app_Pile.ID` **不保证一致**（生成桩会重排），跨库比对一律按**坐标**匹配，不要按 ID。
+- 桩数核对：`结果 tblPileApp 数 = 模板生成承台桩 + app_Pile 显式桩`。
+
+## 7. 一致性闸门（不通过就不要用这批结果）
+
+| # | 检查 | 判据 |
+|---|---|---|
+| 1 | 模型 ↔ 结果 板下桩位 | 坐标集合完全相同（不是只比数量） |
+| 2 | 承台数 | 模型 = 结果（本项目 208） |
+| 3 | 组合数 | 模型 = 结果（本项目 52） |
+| 4 | 模型 Σ`Loads.data0` | = 1,164,014 kN |
+| 5 | Dead 工况总反力 | ≈ 1.49~1.53 MN（0.33 MN = 荷载没进去） |
 
 ```powershell
-$env:PATH = "<YJK安装目录>;<SDK目录>;" + $env:PATH
-& "<SDK目录>\python310\python.exe" -c "from YJKAPI import JcDataFunc; JcDataFunc(); print('OK')"
+& $py -X utf8 -B "<pile-layout-opt>\scripts\af_gate.py" --dir "<工程目录>"
+# 输出 5 行 PASS/FAIL，退出码 0/2；FAIL 就跑第 2 节流程重算
 ```
 
-- `<YJK安装目录>` 必须在 `PATH` 里（原生 DLL 依赖）；否则 `JcDataFunc()` 可能报
-  “未能加载由 ClrYJKAPI.dll 导入的过程”。
-- 工作目录用纯 ASCII 路径；中文路径下 `ReadJcYdb` 可能读到 0 节点/0 承台。
-- YJK 安装根目录的 `ClrYJKAPI.dll`/`YAPIData.dll` 是 C++/CLI 混合模式，
-  **不能**在 pythonnet/.NET 控制台里独立 `LoadFrom`；走 SDK 的 `YJKAPI` 包装。
+## 8. 症状 → 真因对照
 
-## 2. JcDataFunc 最小可用流程
-
-```python
-import os
-os.environ['PATH'] = r'<YJK安装目录>;<SDK目录>;' + os.environ['PATH']
-from YJKAPI import JcDataFunc
-
-jc = JcDataFunc()
-jc.ReadJcYdb(WORK, '\\Jccad_0.ydb')          # WORK 为 ASCII 目录
-
-D = jc.JcDais_Def(10, 2, 1, req, 0, 0)       # 10=梯形现浇, ns=2 矩形, nstep=1, npile=req
-for (x, y) in [(-W/2,-H/2),(W/2,-H/2),(W/2,H/2),(-W/2,H/2)]:
-    jc.JcDais_Cir(D.DaisFlag, 0, x, y)       # 局部坐标轮廓
-jc.JcDais_StepH(D.DaisFlag, 0, H)            # 阶高 mm
-jc.JcDais_App(nj, D.lID, ex, ey, ang, pilelen, dBotElevat, 1)
-for (x, y) in pile_pts:
-    jc.JcPile_App(1, x, y, 0, D.DaisFlag, 0.0, pilelen, dBotElevat, 1)
-
-jc.CreateYDB(WORK, 'Jccad_0.ydb')
-```
-
-读模型列表的坑：
-
-- `GetJcModelDBdata().ToPyList()` 可能报 `PythonEngine is not initialized`；
-  可直接用反射取字段：
-  ```python
-  m = jc.GetJcModelDBdata()
-  nodes    = m.GetType().GetField('m_jcNodeList').GetValue(m)
-  app_dais = m.GetType().GetField('m_jcAppDaisList').GetValue(m)
-  stepH    = m.GetType().GetField('m_jcDaisStepHList').GetValue(m)
-  ```
-- .NET `List` 不支持负索引：`nodes[-1]` 报错，用 `nodes[len(nodes)-1]`。
-
-## 3. 承台更新：`JcDais_App` 会“加”不会“删”
-
-`JcDais_App` 在节点上**新增**一座承台；`app_dais.Remove(old)` 在 pythonnet 下不可靠。
-结果可能是同一柱位出现两座承台，YJK 里表现为“同一柱位不同承台”，并出现大量
-1.8D 桩距报警。
-
-可靠做法：
-
-1. 从干净备份重建，不要在已重复的模型上继续加；
-2. 只改**原承台**的 `kind`/`dBotElevat`/`idaispilelen`，不要新增承台；
-3. 重建后必查：
-   ```sql
-   select count(*) from app_dais;
-   select nj from app_dais group by nj having count(*)>1;   -- 应为空
-   ```
-4. GUI 里仍显示重复承台：用 `prep_model.py` 移出 `CK_F.*`/`Jccad_0_ydb.dat`，再 GenData。
-
-## 4. `jccad_read_by_ydb` 会丢组合 → 导入后回填
-
-API 写出的 ydb 带有完整组合；`jccad_read_by_ydb` 只导入模型，导入后
-`LoadZhuHe` 会减少（常见只剩 8 个）、恒载可能被清零，目标组合可能不存在。
-
-已验证的补救顺序：
-
-1. 先只做 `SetCurrentLabel` + `jccad_read_by_ydb`（`jc.py --gen-only` 的导入段），
-   把模型导入 GUI；
-2. 用 SQL 从 API ydb 回填三张表（列名一致时 `select *`）：
-   ```sql
-   ATTACH '<API工作目录>\Jccad_0.ydb' AS api;
-   DELETE FROM Loads;    INSERT INTO Loads    SELECT * FROM api.Loads;
-   DELETE FROM LoadZhuHe;INSERT INTO LoadZhuHe SELECT * FROM api.LoadZhuHe;
-   DELETE FROM CalPara;  INSERT INTO CalPara  SELECT * FROM api.CalPara;
-   DETACH DATABASE api;
-   ```
-3. 再跑 `jc.py`（**不要再 import**）：GenData 用导入后的 GUI 模型，组合用回填后的；
-4. 判据：`tblPileNL` 行数 ≈ 桩数 × 组合数；`jccad.result`/`CAL_MID.DIS` mtime 刷新；
-   日志“计算正常”。
-
-## 5. 标高体系（示例，按工程实际替换）
-
-| 对象 | 标高/长度 | 说明 |
+| 症状 | 真因 | 处置 |
 |---|---|---|
-| 筏板 | 顶 = 底 + 厚 | `RaftSlab.BotElevat` 为底、`thick` 为厚 |
-| 节点 | 柱底/建筑面 | 与筏板顶可能差一个建筑面层 |
-| 承台顶 | 与筏板顶齐平（或按设计） | 由 `dBotElevat + Σdais_stepH` 反算 |
-| 承台底 | 顶 - Σdais_stepH | 每个类型单独算 |
-| 承台桩长 | 统一桩端 - 承台底 | 先定统一桩端，再反算每类桩长 |
-| 板下桩 | 桩顶 = 筏板底，桩长 = 统一桩端 - 桩顶 | `app_Pile.z` 用绝对标高（mm） |
+| 满屏上拔、单桩上万 kN | 荷载没进模型（Dead 反力只剩自重） | 查 Σ`data0`；Loads 行序是否节点优先 |
+| 组合只有 8 个 / 找不到 51 | 导入把 `LoadZhuHe` 冲掉 | 第 7 步覆盖回完整组合版本 |
+| 改了桩位结果不变 | 会话内改 ydb；或「生成数据」用了 GUI 旧模型 | 重开会话 + `jccad_read_by_ydb` |
+| 桩数对、反力是上一版 | 旧结果没删 | 第 3 步删 6 项 |
+| 新桩"消失" | 撞了模板生成的承台桩（间距按 `app_Pile` 判漏） | 间距检查用结果库 `tblPileApp` |
+| 同一工程两次算不一样 | GUI 状态被改过 | 每次算完跑闸门并记录 5 行签名 |
 
-核对步骤：
+## 9. 本项目完整实录（2026-11）
 
-1. 统计所有承台的 `dBotElevat + Σdais_stepH`，应等于承台顶设计标高；
-2. 统计承台桩端、板下桩端，应统一（或按持力层分区统一）；
-3. 对不上的承台（底标高明显高于/低于筏板）单独列出并修正；
-4. 修完再 `prep_model.py` + `jc.py` 重算。
+1. 初次结果"满屏超限"→ 查到 `Loads` 全 0、组合只剩 8 个：模型被「生成数据」回写覆盖。
+2. 回填 1,164,014 kN 荷载后仍只进 18% → 定位到 **`Loads` 行序按工况重排**；改回节点优先后 Dead 反力 1,493,073 kN，与手算 1,164,014+326,477 吻合。
+3. GUI 里按桩定义设了分桩型刚度（D500 40,000 / D1200 220,000）后，1.0恒+1.0水 的超限从 7 根降到 0。
+4. 上部改荷载后结果又对不上 → 根因是**只跑了 `BaseDraw_BaseGenData`、没跑 `jccad_read`**；补上后荷载从 925,829（点）变为 832,399（点）+225,245（线），Dead 1,740,552。
+5. 用新荷载重排：旧布置 2,229 根、807 根超限（D500 −718.1）→ 移闲桩 + 补峰值两轮到 2,829 根 2 根超限 → 抽稀 350 + 补 141 到 2,620 根 1 根 → 再抽 289 + 补 150 到 **2,481 根（906 承台 + 1,575 板下）、1 根超限（−404.2）、板下平均 −315、`|N|<200` 归零**。
+6. 全过程每轮过 §7 五项闸门；最终板下桩位 1,713/1,714 与结果吻合（1 根被 FE 按间距丢弃）。
 
-## 6. 结果解析
-
-结果表：`基础计算及结果输出\jccad.ydb`
-
-- `tblPileApp`：逐桩（`ID,nRaft_CT,xx,yy,kind`）；
-- `tblPileNL`：按 `CombType/CombID` 取组合，`N` blob 前 9 个 float 的第 1 个即轴力；
-- `tblDaisApp` / `tblDaisDef`：承台。
-
-```python
-n = {pid: struct.unpack('<9f', b)[0] for pid, b in
-     c.execute('select PileID,N from tblPileNL where CombType=1 and CombID=51')}
-over = [r for r in piles if r['kind']==1 and n[r['ID']] < -400]
-```
-
-若后处理失败（`jccad.result` 缺失、`jccad.ydb` 明显偏小、`tblPileNL` 行数不足），
-按“减少组合 / 放粗网格 / 分块或 GUI 直接跑”排查；这是计算链路问题，不是规范限制。
-
-## 7. 一次干净的“重建 + 改标高 + 重算”顺序
-
-```
-1) 关 YJK（或确认无 yjks.exe）
-2) copy <干净备份>  →  Jccad_0.ydb
-3) apply_layout.py <工程目录> <layout.csv>          # 板下桩
-4) SQL：DEF_Pile F2、app_Pile fKn/fKm
-5) SQL：承台 dBotElevat/桩长；板下 z/桩长（按统一桩端）
-6) prep_model.py --dir <工程目录>                   # 移出 CK_F/基础备份/Jccad_0_ydb.dat
-7) jc.py --dir <工程目录> --root <YJK安装目录>
-8) 验收：承台数/重复数；tblPileApp 总数；目标组合超限数；日志“计算正常”
-```
+> 操作提醒：每轮都会用 `Jccad_0.ydb` 做快照再覆盖回来，**改模型前先另存一份**（实测出现过快照把工作副本回退成上一版的情况）；单次基础计算 3~7 min，连续跑多轮时每轮结束要确认 `yjks` 已退出，否则下一条命令会 `OK(0.0s)` 空跑。

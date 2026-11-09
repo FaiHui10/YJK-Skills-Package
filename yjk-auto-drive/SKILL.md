@@ -261,31 +261,68 @@ yjk_importydb <新截面.ydb>            ← 其它技能产出的新模型库�
 & $py -X utf8 -B "$D\jc_react.py" --dir "<工程目录>" --kp <单桩竖向刚度>
 ```
 
-- 链条：`SetCurrentLabel JCCAD_RESULT` → `BaseDraw_GenData_script` → `BaseDraw_BaseAnalysis`（耗时随机器和模型规模变化，按实测 ×2~3 设超时）。
-- **装哪个版本要自己点**：`paths.find_yjk_install()` 可能命中 `YJK_DIR` 指的 7.x，
-  而基础链只在 8.1 上验过 → 用 `--root "<8.x 安装目录>"`；版本 <8 时脚本**直接拒绝**（要试加 `--force`）。
-- 判据三条齐看：`计算分析.log` 末行「计算正常，未发现问题」（**GBK**）+ `jccad.result`/`CAL_MID.DIS` 的 mtime 晚于本轮开始 + `CAL_MID.DIS` 字节结构对得上。
-- **8.1 实测：带文档启动后 IPC 可用**。硬性约束 1 说的"带文档启动失效"针对**建模命令**，不要据此推断基础命令也失效；判据永远是"耗时 + 文件 mtime"。
-- 逐桩反力：`Jccad_1.ydb` 的 `PileForce` 是**空表**，`Jccad_Result_New.ydb` 不一定生成，所以从 `CAL_MID.INP/.DIS` 反算：`R = −Kp × Σ(四节点形函数×UZ)`。`Kp` 是单桩竖向刚度，**只能从基础计算书取**——用"Σ弹簧反力 = Σ桩反力"反推会偏大（弹簧里同时含筏板底土弹簧）。
-- 改 `Jccad_0.ydb` 的 `app_Pile`（`DaisFlag=-1` = 板下桩）之前**先关掉打开该工程的 YJK**，否则写入会被内存副本覆盖。
-- **基础模块的备份/图形文件会把旧模型恢复回来（已验证，最坑）**：`基础备份\`、`<工程名>_F.yjc`、`.tmp`、`.yg`、`.ygt`、`.ygjcbak`、`Jccad_0_ydb.dat` 都是它的模型与恢复源。
-  只改 `app_Pile` 后，用户一进基础模块并保存，就会把 `Jccad_0.ydb` 写回旧桩，**并把桩顶 `z` 写成 0**（实测会出现桩数被写回旧值、z 被写成 0）。
-  可靠做法是把这些文件**整体移出工程目录**（不是改名留在原地），再重开工程：实测移出后界面显示与 ydb 一致。现成脚本 `pile-layout-opt\scripts\prep_model.py --dir <工程目录>`。
-- 移出后若用户又打开并保存了基础模块，`z` 会被 GUI 统一重算（实测 z 会被统一重算）；要保留原桩顶标高就在保存后重算复核。
-- `.yjc` 可以缺席：工程没有 `_F.yjc` 时照样能打开，`--gen-only` / `--output` 也照常跑通，且**不会重建它** → 它是 GUI 侧数据，不是驱动链的输入。
-- `--gen-only` 结束时会重写 `Jccad_0.ydb`：桩数/桩位应保持不变；若变了，就是上一条那几个 GUI 文件把旧模型带回来了。
-- **不清旧结果会直接复用**：改桩后必须删 `基础计算及结果输出\jccad.result`、`jccad.ydb` 与旧 `*.out`，否则"改了没反应"。
-- 逐桩反力更省事的来源是 `基础计算及结果输出\YJK-F桩承载力验算.out`：按 `ZH-n` 分块解析 `组合号 Nk Ra`，`ZH-n` 与 `app_Pile order by ID` 一一对应。
-  解析要在章节标题（`一、`/`二、`/`三、`）处截断，否则后续表格的数字会串进来，峰值判错。
-- 布桩优化（变距/减桩/复核）交给 `pile-layout-opt` 技能，本技能只负责驱动通道。
+### 数据状态：一个模型 4 份，两条回写路径（**所有"结果乱了"的根源**）
 
-### 基础模块 8.1 二次开发 API（`JcDataFunc`）
+| 状态 | 谁写 |
+|---|---|
+| GUI 内存里的基础模型（工程内 `CK.yjk` / `<工程名>_F.yjc`） | 开工程时恢复；`jccad_read_by_ydb` 替换 |
+| `<工程>\Jccad_0.ydb` | 「生成数据」**从 GUI 回写**；导入也可能回写 |
+| `基础计算及结果输出\Jccad_0.ydb` | 「生成数据」写 |
+| `jccad.result` / `jccad.ydb` / `中间数据\*` | 「基础计算、分析」写，**不带版本标记** |
 
-- **8.1 SDK 不在 PyPI 包里**：PyPI 的 `YJKAPI` 包可能对应旧版 DLL，写出的 ydb 在 8.1 里导入后可能空跑；要用 Gitee `yjk-opensource/yjkapi_-python` 对应版本分支的 `SDK` 包（解压出 `python310` + `YJKAPI`）。运行时把 `<YJK安装目录>` 加入 `PATH`，工作目录用纯 ASCII 路径。
-- **`JcDais_App` 只加不删**：在同一柱位新增承台时，`app_dais.Remove(old)` 可能不生效，导致同一柱位出现两座承台。改承台优先只改原承台的 `kind`/`dBotElevat`/`idaispilelen`；改完必须核对 `app_dais` 总数与 `group by nj having count(*)>1`。
-- **`jccad_read_by_ydb` 只导模型、不保组合**：导入后 `LoadZhuHe` 会减少、恒载可能被清零；如发现组合缺失，先从 API ydb 回填 `Loads`/`LoadZhuHe`/`CalPara`，再跑 `jc.py`（不要再 import）。
-- **标高体系要统一核对**：筏板顶/底、承台顶/底（底 = 顶 - 台阶高之和）、承台桩长（按统一桩端反算）、板下桩顶/桩长要能对上；不要把不同基准的 `z` 混用。
-- 细节、SQL、脚本与验收顺序见 `references/foundation-jccad-8.1-api.md`。
+三条实测结论：①「生成数据」**不读磁盘的 `Jccad_0.ydb`**，算的是 GUI 里那份（可能是旧桩位/零荷载/8 个默认组合）；② `jccad_read_by_ydb` **只保证模型**，组合和荷载可能被清；③「生成数据」会把 GUI 状态**回写覆盖** `Jccad_0.ydb`，旧结果却还留在旁边。
+
+### 标准链条（每次重算照此，缺一步就会串版）
+
+```
+关 YJK → 放好 Jccad_0.ydb → 移走 CK_F.*/Jccad_0_ydb.dat → 删旧结果
+→ 启动（-open 工程）→ SetCurrentLabel JCCAD_RESULT
+→ jccad_read_by_ydb → 把模型文件再覆盖回 Jccad_0.ydb（**不能省**）
+→ BaseDraw_GenData_script → BaseDraw_BaseAnalysis → 过闸门
+```
+
+- **每轮重新开 YJK**：会话内改 `Jccad_0.ydb` 对「生成数据」无效（模型在开工程时就进内存了）。实测同一会话连改 3 次桩位，结果一字不变；重开会话立刻生效。
+- 只导入不覆盖 → 组合/荷载被清（常见只剩 8 组合、`Loads` 全 0）；只覆盖不导入 → 桩位不更新。
+
+### 荷载铁律：`Loads` 必须「节点优先」行序
+
+`Loads` 一行 = 节点 × 工况，`lFlag` 工况（0..5）、`lIndex` 节点序号、`data0` 为竖向分量。
+**必须 `ID = 节点序号 × 6 + 工况 + 1`**（同一节点 6 个工况连号）。按「工况优先」重排会让 JCCAD 只认到约 **18%** 的荷载且**不报错**（实测 1,164,014 kN 只进 213,329 kN）。判据看 `CAL_MID.LoadCases.txt` 的 Dead **总支反力**：应 ≈ 基础自重 + 上部恒载，只剩基础自重就是丢了。
+
+### 桩刚度（分桩型）
+
+手册 §7.5：筏板计算参数「基床系数和桩刚度」选**直接取默认值** → 命令**「桩刚度」**（`BaseDraw_DrawPileK`）→ 按**桩定义**改抗压/抗拉/抗弯 → 布置。**抗拔刚度 = 抗拔承载力 / 0.01 m = 100×F2**（D500 400→40,000；D1200 2,200→220,000）。交互指定值重生成数据会保留。
+**实测坑**：直接改 `app_Pile.fKn/fALFQ/fKm`（或 `NIK=-1`）再导入重算，结果**一个数都不变** —— 不是落库位置；没有 GUI 条件时只能退用全局 `CalPara.fPILEK`（取多数桩的 D500 值，D1200 偏柔→对 D500 偏安全）。
+
+### 读结果
+
+- **逐桩反力**用 `基础计算及结果输出\jccad.ydb` → `tblPileNL(PileID, CombID, CombType, N)`，`N` 为 9×float 的 blob，**第 1 个是轴力**（负=上拔）。比解析 `*.out` 稳（`PileForce` 在 8.1 是空表）。
+- 结果桩号与 `app_Pile.ID` 不保证一致（模板生成的承台桩会重排）→ 跨库比对**一律按坐标**。
+- 间距/桩数审计必须用结果库 `tblPileApp`（含模板生成桩），只用 `app_Pile` 会漏 60% 以上承台桩，新桩撞桩后会被静默丢弃。
+
+### 五项一致性闸门（不过就别拿结果做设计）
+
+模型↔结果板下桩位坐标一致 · 承台数一致 · 组合数一致 · 模型 Σ`Loads.data0` = 应有恒载 · Dead 工况总反力 ≈ 自重+恒载。
+
+```powershell
+& $py -X utf8 -B "<pile-layout-opt>\scripts\af_gate.py" --dir "<工程目录>"   # 5 行 PASS/FAIL，rc=0/2
+```
+
+### 其它既有约束（仍然有效）
+
+- **装哪个版本要自己点**：`--root "<8.x 安装目录>"`；版本 <8 时 `jc.py` 直接拒绝（要试加 `--force`）。
+- **GUI 备份/图形文件会把旧模型恢复回来**：`基础备份\`、`<工程名>_F.yjc/.tmp/.yg/.ygt/.ygjcbak`、`Jccad_0_ydb.dat`，改桩前整体移出（`pile-layout-opt\scripts\prep_model.py`），保存后 `z` 会被 GUI 重算。
+- **旧结果必须全清**：`jccad.result`、`jccad.ydb`、`Jccad_1.ydb`、`jccad.pre`、`element.data`、`中间数据\`、`*.out`；只删 `.out` 会复用上一版网格与反力。
+- **8.1 实测：带文档启动后 IPC 可用**；判据永远是"耗时 + 文件 mtime"。
+- 逐桩反力的 `*.out` 备选来源、`CAL_MID.DIS` 格式、命令全表见 `references\commands.md` §6。
+
+### JcDataFunc（8.1 二次开发 API）
+
+- **8.1 SDK 不在 PyPI 包里**：PyPI 的 `YJKAPI` 常是旧 DLL（写出的 ydb 在 8.1 空跑）；用 Gitee `yjk-opensource/yjkapi_-python` 对应版本分支的 `SDK`（`python310` + `YJKAPI`），`PATH` 里加安装目录，工作目录用纯 ASCII。
+- **`JcDais_App` 只加不删**：改承台优先只改原承台的 `kind`/`dBotElevat`/`idaispilelen`；改完核对 `app_dais` 总数与 `group by nj having count(*)>1`。
+- 标高体系：筏板顶/底、承台顶/底（底 = 顶 − Σ台阶高）、桩长按统一桩端反算，不要混用基准。
+
+**完整流程、SQL、闸门判据、症状对照与实测实录见 `references/foundation-jccad-8.1-api.md`。**
 
 命令全表、耗时、`YJK.CUI` 反查法与 `CAL_MID.DIS` 格式见 `references\commands.md` §6。
 
